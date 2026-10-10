@@ -1,8 +1,7 @@
-const axios = require('axios');
+const puppeteer = require('puppeteer');
 const { initializeApp } = require('firebase/app');
 const { getFirestore, doc, setDoc } = require('firebase/firestore');
 
-// Firebase Configuration (Apni details yahan dalo agar change karni hon)
 const firebaseConfig = {
   apiKey: "YOUR_FIREBASE_API_KEY",
   authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
@@ -15,50 +14,78 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-async function fetchAndSaveData() {
-    const url = "https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList";
-    
-    // Fresh payload
-    const payload = {
-        pageSize: 10,
-        pageNo: 1,
-        typeId: 30,
-        language: 7,
-        random: "23792de78b5b4b86aa76681229f03b2",
-        signature: "BBDA0366DD3EF072D7ACFAC97983DE0D",
-        timestamp: 1791645408
-    };
-
+async function scrapeAndSaveData() {
+    console.log("Launching browser...");
+    let browser;
     try {
-        let response = await axios.post(url, payload, {
-            headers: {
-                "Content-Type": "application/json",
-                "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOiIxNzkxNjM5ODI0IiwibmJmIjoiMTc5MTYzOTgyNCIsImV4cCI6IjE3OTE2NDE2MjQiLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL2V4cGlyYXRpb24iOiIxMC8xMC8yMDI2IDg6NDM6NDQgUE0iLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOiJBY2Nlc3NfVG9rZW4iLCJVc2VySWQiOiIzODc3NjUiLCJVc2VyTmFtZSI6Ijk1OTc4NTkyNTMyMyIsIlVzZXJQaG90byI6IjEiLCJOaWNrTmFtZSI6Ik1lbWJlck5OR1FDREFSIiwiQW1vdW50IjoiMzk0Ni4zNCIsIkludGVncmFsIjoiMCIsIkxvZ2luTWFyayI6Ikg1IiwiTG9naW5UaW1lIjoiMTAvMTAvMjAyNiA4OjEzOjQ0IFBNIiwiTG9naW5JUEFkZHJlc3MiOiIyNy4xMzAuMTY5LjE2IiwiRGJOdW1iZXIiOiIwIiwiSXN2YWxpZGF0b3IiOiIwIiwiS2V5Q29kZSI6IjI1NSIsIlRva2VuVHlwZSI6IkFjY2Vzc19Ub2tlbiIsIlBob25lVHlwZSI6IjEiLCJVc2VyVHlwZSI6IjAiLCJVc2VyTmFtZTIiOiIiLCJpc3MiOiJqd3RJc3N1ZXIiOiJhdWQiOiJsb3R0ZXJ5VGlja2V0In0.IUMgb7VsDkGelJ08vzwmjftvYtOuA7uSQafKHdldyFQ",
-                "ar-origin": "https://cklottery.cc",
-                "origin": "https://cklottery.cc",
-                "referer": "https://cklottery.cc/",
-                "user-agent": "Mozilla/5.0 (Linux; Android 10)"
+        // Render ke Linux environment ke liye necessary args
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
+            ]
+        });
+
+        const page = await browser.newPage();
+        
+        // Mobile user-agent set karte hain taaki site mobile version load kare
+        await page.setUserAgent("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+
+        console.log("Opening game website...");
+        // Game ki main URL jahan se session/signature banta hai
+        await page.goto('https://cklottery.cc/#/home/CosmicWingo', { waitUntil: 'networkidle2', timeout: 60000 });
+
+        // Thoda wait karte hain taaki page fully load ho jaye aur API request trigger ho
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        // Browser ke andar se hi API call intercept karke data nikal lenge ya direct fetch execute karenge
+        const result = await page.evaluate(async () => {
+            try {
+                // Browser ke context mein fetch request chalayenge jiske paas saare valid cookies aur signatures honge
+                const response = await fetch("https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        pageSize: 10,
+                        pageNo: 1,
+                        typeId: 30,
+                        language: 7
+                    })
+                });
+                return await response.json();
+            } catch (err) {
+                return { error: err.message };
             }
         });
 
-        let data = response.data;
-        if (data && data.code === 0 && data.data && data.data.list) {
+        if (result && result.code === 0 && result.data && result.data.list) {
             await setDoc(doc(db, "wingo_data", "latest_results"), {
-                list: data.data.list,
+                list: result.data.list,
                 updatedAt: new Date().toISOString()
             });
-            console.log("Data successfully updated to Firebase!");
+            console.log("Data successfully scraped and updated to Firebase!");
         } else {
-            console.log("Server response error:", data);
+            console.log("Scraping response error:", result);
         }
+
+        await browser.close();
     } catch (error) {
-        console.error("Error fetching data:", error.message);
+        console.error("Puppeteer Error:", error.message);
+        if (browser) {
+            await browser.close();
+        }
     }
 }
 
 // Pehli baar run hoga
-fetchAndSaveData();
+scrapeAndSaveData();
 
-// Har 5 second mein repeat hoga
-setInterval(fetchAndSaveData, 5000);
-console.log("WinGo Background Worker Started...");
+// Har 10 second mein repeat hoga
+setInterval(scrapeAndSaveData, 10000);
+console.log("WinGo Puppeteer 24/7 Worker Started...");
