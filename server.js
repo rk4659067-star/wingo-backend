@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer');
+const axios = require('axios');
 const { initializeApp } = require('firebase/app');
 const { getFirestore, doc, setDoc } = require('firebase/firestore');
 
@@ -14,78 +14,63 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-async function scrapeAndSaveData() {
-    console.log("Launching browser...");
-    let browser;
+// Axios client with mobile headers simulation
+const client = axios.create({
+    headers: {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://cklottery.cc/",
+        "Origin": "https://cklottery.cc"
+    }
+});
+
+async function fetchAndSaveData() {
     try {
-        // Render ke Linux environment ke liye necessary args
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu'
-            ]
-        });
+        // Step 1: Main site se session / cookies handshake karte hain
+        const homeResponse = await client.get('https://cklottery.cc/', { maxRedirects: 5 });
+        const cookies = homeResponse.headers['set-cookie'];
+        const cookieHeader = cookies ? cookies.join('; ') : '';
 
-        const page = await browser.newPage();
+        // Step 2: Live data API ko valid session cookies ke sath request bhejte hain
+        const url = "https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList";
         
-        // Mobile user-agent set karte hain taaki site mobile version load kare
-        await page.setUserAgent("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+        const payload = {
+            pageSize: 10,
+            pageNo: 1,
+            typeId: 30,
+            language: 7
+        };
 
-        console.log("Opening game website...");
-        // Game ki main URL jahan se session/signature banta hai
-        await page.goto('https://cklottery.cc/#/home/CosmicWingo', { waitUntil: 'networkidle2', timeout: 60000 });
-
-        // Thoda wait karte hain taaki page fully load ho jaye aur API request trigger ho
-        await new Promise(resolve => setTimeout(resolve, 5000));
-
-        // Browser ke andar se hi API call intercept karke data nikal lenge ya direct fetch execute karenge
-        const result = await page.evaluate(async () => {
-            try {
-                // Browser ke context mein fetch request chalayenge jiske paas saare valid cookies aur signatures honge
-                const response = await fetch("https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({
-                        pageSize: 10,
-                        pageNo: 1,
-                        typeId: 30,
-                        language: 7
-                    })
-                });
-                return await response.json();
-            } catch (err) {
-                return { error: err.message };
+        const response = await client.post(url, payload, {
+            headers: {
+                "Content-Type": "application/json",
+                "Cookie": cookieHeader,
+                "ar-origin": "https://cklottery.cc"
             }
         });
 
-        if (result && result.code === 0 && result.data && result.data.list) {
+        let data = response.data;
+        if (data && data.code === 0 && data.data && data.data.list) {
             await setDoc(doc(db, "wingo_data", "latest_results"), {
-                list: result.data.list,
+                list: data.data.list,
                 updatedAt: new Date().toISOString()
             });
-            console.log("Data successfully scraped and updated to Firebase!");
+            console.log("Data successfully fetched via HTTP session & updated to Firebase!");
         } else {
-            console.log("Scraping response error:", result);
+            console.log("Server response error:", data);
         }
-
-        await browser.close();
     } catch (error) {
-        console.error("Puppeteer Error:", error.message);
-        if (browser) {
-            await browser.close();
+        console.error("HTTP Fetch Error:", error.message);
+        if (error.response) {
+            console.error("Status code:", error.response.status);
         }
     }
 }
 
 // Pehli baar run hoga
-scrapeAndSaveData();
+fetchAndSaveData();
 
 // Har 10 second mein repeat hoga
-setInterval(scrapeAndSaveData, 10000);
-console.log("WinGo Puppeteer 24/7 Worker Started...");
+setInterval(fetchAndSaveData, 10000);
+console.log("WinGo HTTP Proxy Worker Started...");
