@@ -1,11 +1,7 @@
 {
-  "name": "wingo-backend",
+  "name": "wingo-vercel-backend",
   "version": "1.0.0",
-  "description": "WinGo HTTP Session Scraper",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
+  "description": "WinGo Vercel Scraper",
   "dependencies": {
     "axios": "^1.6.0",
     "firebase": "^10.8.0"
