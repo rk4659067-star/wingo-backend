@@ -3,22 +3,21 @@ import hashlib
 import json
 import random
 import requests
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
+app.secret_key = "udey_wingo_bot_secret_key_xyz"
 
-# Global Bot & User State Storage
+# Global Bot State for 24/7 background worker
 bot_state = {
     "is_running": False,
-    "phone": "",
-    "password": "",
     "token": "",
     "game_type_id": 30,
     "base_amount": 10,
     "custom_bet_counts": [1, 10, 100, 1000, 10000, 100000],
     
-    # Statistics & Progress
+    # Stats
     "win_count": 0,
     "loss_count": 0,
     "win_streak": 0,
@@ -98,20 +97,6 @@ def background_bot_loop():
         return
 
     try:
-        # 1. Fetch Balance
-        timestamp_val = int(time.time())
-        random_val = generate_random_hex()
-        bal_payload = {"language": 7, "random": random_val, "timestamp": timestamp_val}
-        bal_payload["signature"] = calculate_dynamic_signature(bal_payload)
-
-        bal_res = requests.post("https://ckygjf6r.com/api/webapi/GetBalance", json=bal_payload, headers={
-            "Content-Type": "application/json;charset=UTF-8",
-            "authorization": "Bearer " + bot_state["token"],
-            "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
-            "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-        }, timeout=10)
-        
-        # 2. Fetch Live Market Data
         timestamp_val = int(time.time())
         random_val = generate_random_hex()
         live_payload = {
@@ -141,7 +126,6 @@ def background_bot_loop():
                 if issue_num and issue_num not in bot_state["processed_periods"]:
                     bot_state["processed_periods"].add(issue_num)
                     
-                    # Process previous result & streak calculation
                     if bot_state["last_prediction"]:
                         actual = get_bs(num)
                         is_win = (bot_state["last_prediction"] == "SMALL" and actual == "S") or (bot_state["last_prediction"] == "BIG" and actual == "B")
@@ -188,7 +172,6 @@ def background_bot_loop():
                     if len(bot_state["numbers"]) > 20:
                         bot_state["numbers"].pop(0)
 
-                # Next prediction & Auto Betting
                 next_pred = analyze_pattern()
                 bot_state["last_prediction"] = next_pred
                 current_active_issue = str(int(issue_num) + 1) if issue_num.isdigit() else ""
@@ -199,7 +182,6 @@ def background_bot_loop():
                         if bot_state["can_place_bet"]:
                             bot_state["real_bet_issues"].add(current_active_issue)
                             
-                            # Place Real Bet via API
                             b_count = get_current_bet_count()
                             select_type_val = 13 if next_pred == "BIG" else 14
                             t_val = int(time.time())
@@ -236,85 +218,119 @@ def background_bot_loop():
     except Exception as e:
         print("Background worker error:", str(e))
 
-# Setup APScheduler to run background loop every 5 seconds
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=background_bot_loop, trigger="interval", seconds=5)
 scheduler.start()
 
-# ----------------- WEB DASHBOARD INTERFACE -----------------
+# ----------------- EXACT HTML TEMPLATE ROUTE -----------------
 @app.route('/')
 def index():
     return render_template_string("""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Udey Cloud 24/7 WinGo Bot</title>
-        <style>
-            * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
-            body { background: #020617; color: #fff; text-align: center; padding: 15px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-            .container { width: 100%; max-width: 400px; }
-            .card { background: #1e1e1e; padding: 15px; margin: 10px auto; border-radius: 8px; text-align: left; box-shadow: 0 2px 4px rgba(0,0,0,0.5); }
-            .primary-btn { width: 100%; padding: 14px; background: linear-gradient(to right, #f3cf8c, #c99b46); border: none; border-radius: 8px; color: #1a0f0f; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 10px; }
-            .stop-btn { background: linear-gradient(to right, #e74c3c, #c0392b); color: #fff; }
-            .input-group { margin-bottom: 10px; }
-            .input-group label { display: block; font-size: 12px; color: #c9a973; margin-bottom: 4px; }
-            .input-group input, .input-group select { width: 100%; padding: 10px; background-color: #0f0707; border: 1px solid #573333; border-radius: 6px; color: #fff; font-size: 13px; outline: none; }
-            #historyBox { max-height: 150px; overflow-y: auto; background: #111; padding: 10px; margin-top: 15px; border-radius: 10px; text-align: left; font-size: 11px; }
-            .win { color: #00ff88; margin-bottom: 3px; }
-            .loss { color: #ff3b3b; margin-bottom: 3px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <!-- LOGIN PANEL -->
-            <div id="login-card" class="card" style="display: {% if logged_in %}none{% else %}block{% endif %};">
-                <h3>📱 Cloud Bot Login</h3>
-                <form method="POST" action="/login">
-                    <div class="input-group">
-                        <label>Phone Number</label>
-                        <input type="text" name="phone" placeholder="Enter phone" required>
-                    </div>
-                    <div class="input-group">
-                        <label>Password</label>
-                        <input type="password" name="password" placeholder="Enter password" required>
-                    </div>
-                    <button type="submit" class="primary-btn">🔓 Login & Start Cloud Bot</button>
-                </form>
-            </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔥 WinGo Fully Automatic Bot (Clean Trend Predictor)</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        body { background: #020617; color: #fff; text-align: center; padding: 15px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .container { width: 100%; max-width: 400px; }
+        .card { background: #1e1e1e; padding: 15px; margin: 10px auto; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.5); text-align: left; }
+        .dash-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .top-badge { background-color: #271515; border: 1px solid #573333; color: #2ecc71; padding: 5px 10px; border-radius: 15px; font-size: 11px; font-weight: bold; }
+        .period { color: #f39c12; font-weight: bold; }
+        .number { font-size: 22px; color: #2ecc71; font-weight: bold; }
+        .timer-display { font-size: 16px; color: #e74c3c; font-weight: bold; background: #2a1215; padding: 4px 8px; border-radius: 6px; border: 1px solid #723232; display: inline-block; }
+        #result { margin-top: 10px; font-size: 18px; font-weight: bold; color: #38bdf8; text-align: center; }
+        #historyBox { max-height: 140px; overflow-y: auto; background: #111; padding: 10px; margin-top: 15px; border-radius: 10px; text-align: left; font-size: 12px; }
+        .win { color: #00ff88; margin-bottom: 4px; }
+        .loss { color: #ff3b3b; margin-bottom: 4px; }
+        .box { margin-top: 15px; background: #1e1e1e; padding: 12px; border-radius: 8px; text-align: left; }
+        .primary-btn { width: 100%; padding: 14px; background: linear-gradient(to right, #f3cf8c, #c99b46); border: none; border-radius: 8px; color: #1a0f0f; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 10px; box-shadow: 0 4px 10px rgba(212, 163, 83, 0.3); }
+        .stop-btn { background: linear-gradient(to right, #e74c3c, #c0392b); color: #fff; }
+        .input-group { margin-bottom: 10px; }
+        .input-group label { display: block; font-size: 12px; color: #c9a973; margin-bottom: 4px; }
+        .input-group input, .input-group select { width: 100%; padding: 10px; background-color: #0f0707; border: 1px solid #573333; border-radius: 6px; color: #fff; font-size: 13px; outline: none; }
+    </style>
+</head>
+<body>
 
-            <!-- DASHBOARD PANEL -->
-            <div id="dash-card" class="card" style="display: {% if logged_in %}block{% else %}none{% endif %};">
-                <h3 style="color: #f3cf8c; margin-bottom: 10px;">☁️ 24/7 Cloud Bot Dashboard</h3>
-                <p style="font-size: 12px; margin-bottom: 6px;">Status: <span id="status-text" style="font-weight:bold;">Running on Cloud Server</span></p>
-                <p style="font-size: 12px; margin-bottom: 6px;">📊 Win: <span id="win">0</span> | Loss: <span id="loss">0</span></p>
-                <p style="font-size: 12px; margin-bottom: 6px;">🔥 Level: <span id="level">1</span> | Net P/L: <span id="pl" style="font-weight:bold;">0</span></p>
-
-                <form method="POST" action="/toggle">
-                    <button type="submit" id="toggle-btn" class="primary-btn {% if is_running %}stop-btn{% else %}{% endif %}">
-                        {% if is_running %}⏹ Stop Cloud Bot{% else %}🚀 Start Cloud Bot{% endif %}
-                    </button>
-                </form>
-                <form method="POST" action="/logout" style="margin-top: 6px;">
-                    <button type="submit" style="width:100%; background:none; border:none; color:#c9a973; font-size:11px; text-decoration:underline; cursor:pointer;">🚪 Logout Session</button>
-                </form>
-
-                <h3 style="font-size: 12px; color: #c9a973; margin-top: 15px;">📜 Cloud Live Logs</h3>
-                <div id="historyBox">
-                    {% for log in logs %}
-                        <div class="{{ log.type }}">[{{ log.time }}] {{ log.msg }}</div>
-                    {% endfor %}
-                </div>
-            </div>
+    <!-- 1. LOGIN SCREEN -->
+    <div id="login-screen" class="container" style="display: {% if logged_in %}none{% else %}block{% endif %};">
+        <div style="text-align: center; margin-bottom: 20px;">
+            <div style="font-size: 30px;">🟡</div>
+            <h2>Ck Lottery</h2>
+            <p style="font-size: 11px; color: #bfa16f;">Cloud 24/7 Server Login</p>
         </div>
-        <script>
-            // Auto-refresh dashboard logs and stats every 3 seconds without reloading page manually
-            setTimeout(function(){ location.reload(); }, 4000);
-        </script>
-    </body>
-    </html>
-    """, logged_in=bool(bot_state["token"]), is_running=bot_state["is_running"], logs=bot_state["logs"])
+        
+        <div class="card">
+            <h3>📱 Enter Account Credentials</h3>
+            <form method="POST" action="/login">
+                <div class="input-group">
+                    <label>Phone Number</label>
+                    <input type="text" name="phone" placeholder="e.g. 959780000003" required>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" name="password" placeholder="Enter your password" required>
+                </div>
+                <button type="submit" class="primary-btn" style="text-align: center;">🔓 Login & Connect</button>
+            </form>
+            <div id="login-error" style="color: #ff3b3b; font-size: 12px; margin-top: 8px; text-align: center;">{{ login_error }}</div>
+        </div>
+    </div>
+
+    <!-- 2. DASHBOARD -->
+    <div id="dashboard-screen" class="container" style="display: {% if logged_in %}block{% else %}none{% endif %};">
+        <div class="dash-header">
+            <h3 style="font-size: 14px; color: #f3cf8c;">🤖 CLOUD SMART GUARD BOT</h3>
+            <button class="top-badge" id="user-balance">Bal: {{ balance }}</button>
+        </div>
+
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0;">
+                <div style="font-size: 12px;">Cloud Status: <span style="color: #00ff88; font-weight: bold;">{% if is_running %}Running 24/7 🚀{% else %}Paused ⏸️{% endif %}</span></div>
+            </div>
+            <div id="result" style="color: #38bdf8; font-size: 15px; margin: 10px 0;">Bot is active on cloud server</div>
+
+            <form method="POST" action="/toggle">
+                <button type="submit" id="bot-toggle-btn" class="primary-btn {% if is_running %}stop-btn{% else %}{% endif %}">
+                    {% if is_running %}⏹ Stop Cloud Bot{% else %}🚀 Start Cloud Bot{% endif %}
+                </button>
+            </form>
+            <form method="POST" action="/logout">
+                <button type="submit" style="width:100%; margin-top:8px; background:none; border:none; color:#c9a973; font-size:11px; text-decoration:underline; cursor:pointer;">🚪 Logout / Change Account</button>
+            </form>
+        </div>
+
+        <div class="box">
+            <p style="font-size: 12px;">📊 Win: <span id="win">{{ win_count }}</span> | Loss: <span id="loss">{{ loss_count }}</span></p>
+            <p style="font-size: 12px; margin-top: 4px;">🔥 Win Streak: <span id="win-streak">{{ win_streak }}</span> (Max: <span id="max-win-streak">{{ max_win_streak }}</span>)</p>
+            <p style="font-size: 12px; margin-top: 4px;">❄️ Loss Streak: <span id="loss-streak">{{ loss_streak }}</span> (Max: <span id="max-loss-streak">{{ max_loss_streak }}</span>)</p>
+            <p style="font-size: 12px; margin-top: 4px;">🔥 Current Level: Level <span id="current-level">{{ current_level }}</span></p>
+            <p style="font-size: 12px; margin-top: 4px; font-weight: bold; color: #f3cf8c;">📈 Net P/L: <span id="net-pl" style="color: {% if net_pl >= 0 %}#00ff88{% else %}#ff3b3b{% endif %};">{{ net_pl }}</span></p>
+        </div>
+
+        <h3 style="font-size: 13px; color: #c9a973; margin-top: 15px; text-align: left;">📜 Cloud Live Action & Logs</h3>
+        <div id="historyBox">
+            {% for log in logs %}
+                <div class="{{ log.type }}">[{{ log.time }}] {{ log.msg }}</div>
+            {% endfor %}
+        </div>
+    </div>
+    <script>
+        // Auto refresh page every 4 seconds to sync live cloud logs and server stats
+        setTimeout(function(){ location.reload(); }, 4000);
+    </script>
+</body>
+</html>
+    """, logged_in=bool(bot_state["token"]), is_running=bot_state["is_running"], 
+       win_count=bot_state["win_count"], loss_count=bot_state["loss_count"],
+       win_streak=bot_state["win_streak"], max_win_streak=bot_state["max_win_streak"],
+       loss_streak=bot_state["loss_streak"], max_loss_streak=bot_state["max_loss_streak"],
+       current_level=bot_state["current_level"], net_pl=bot_state["net_pl"],
+       logs=bot_state["logs"], balance="Live", login_error="")
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -343,13 +359,12 @@ def login():
             token = data.get("token") or (data.get("data") if isinstance(data.get("data"), str) else data.get("data", {}).get("token"))
             if token:
                 bot_state["token"] = token
-                bot_state["phone"] = phone
                 bot_state["is_running"] = True
                 log_message("Cloud bot logged in and auto-started successfully!", "win")
     except Exception as e:
         log_message("Login network error.", "loss")
 
-    return index()
+    return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
@@ -358,14 +373,14 @@ def toggle():
         log_message("Cloud bot resumed.", "win")
     else:
         log_message("Cloud bot paused by user.", "loss")
-    return index()
+    return redirect(url_for('index'))
 
 @app.route('/logout', methods=['POST'])
 def logout():
     bot_state["token"] = ""
     bot_state["is_running"] = False
     bot_state["logs"] = []
-    return index()
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
