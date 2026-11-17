@@ -3,21 +3,18 @@ import hashlib
 import json
 import random
 import requests
-from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template_string, request, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
-app.secret_key = "udey_wingo_bot_secret_key_xyz"
 
-# Global Bot State for 24/7 background worker
+# Global Bot State
 bot_state = {
     "is_running": False,
     "token": "",
     "game_type_id": 30,
     "base_amount": 10,
     "custom_bet_counts": [1, 10, 100, 1000, 10000, 100000],
-    
-    # Stats
     "win_count": 0,
     "loss_count": 0,
     "win_streak": 0,
@@ -26,8 +23,6 @@ bot_state = {
     "max_loss_streak": 0,
     "current_level": 1,
     "net_pl": 0,
-    
-    # Internal Tracking
     "numbers": [],
     "last_prediction": "",
     "processed_periods": set(),
@@ -79,10 +74,8 @@ def analyze_pattern():
     numbers = bot_state["numbers"]
     if len(numbers) < 3:
         return ""
-    
     recent_bs = [get_bs(n) for n in numbers]
     full_str = "".join(recent_bs)
-    
     if full_str.endswith("SBS"):
         return "BIG"
     elif full_str.endswith("BSB"):
@@ -91,11 +84,10 @@ def analyze_pattern():
         last_bs = recent_bs[-1]
         return "SMALL" if last_bs == "S" else "BIG"
 
-# ----------------- BACKGROUND WORKER (24/7 RUNNER) -----------------
+# BACKGROUND WORKER FOR 24/7 AUTO BETTING
 def background_bot_loop():
     if not bot_state["is_running"] or not bot_state["token"]:
         return
-
     try:
         timestamp_val = int(time.time())
         random_val = generate_random_hex()
@@ -119,13 +111,11 @@ def background_bot_loop():
                 latest = lst[0]
                 issue_num = str(latest.get("issueNumber") or latest.get("issuenumber"))
                 num = int(latest.get("number"))
-
                 epoch_sec = int(time.time())
                 remaining_sec = 30 - (epoch_sec % 30)
 
                 if issue_num and issue_num not in bot_state["processed_periods"]:
                     bot_state["processed_periods"].add(issue_num)
-                    
                     if bot_state["last_prediction"]:
                         actual = get_bs(num)
                         is_win = (bot_state["last_prediction"] == "SMALL" and actual == "S") or (bot_state["last_prediction"] == "BIG" and actual == "B")
@@ -181,7 +171,6 @@ def background_bot_loop():
                         bot_state["last_betted_issue"] = current_active_issue
                         if bot_state["can_place_bet"]:
                             bot_state["real_bet_issues"].add(current_active_issue)
-                            
                             b_count = get_current_bet_count()
                             select_type_val = 13 if next_pred == "BIG" else 14
                             t_val = int(time.time())
@@ -199,30 +188,20 @@ def background_bot_loop():
                                 "timestamp": t_val
                             }
                             bet_payload["signature"] = calculate_dynamic_signature(bet_payload)
-
-                            bet_res = requests.post("https://ckygjf6r.com/api/webapi/GameBetting", json=bet_payload, headers={
+                            requests.post("https://ckygjf6r.com/api/webapi/GameBetting", json=bet_payload, headers={
                                 "Content-Type": "application/json;charset=UTF-8",
                                 "authorization": "Bearer " + bot_state["token"],
                                 "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
                                 "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
                             }, timeout=10)
-                            
-                            b_data = bet_res.json()
-                            if b_data and (b_data.get("code") == 0 or b_data.get("msg") in ["Succeed", "Bet success"]):
-                                log_message(f"✅ Auto Bet Placed [{current_active_issue}]: {next_pred} (Amt: {get_current_total_bet_amount()})", "win")
-                            else:
-                                log_message(f"❌ Bet Failed [{current_active_issue}]: {b_data.get('msg', 'Unknown')}", "loss")
-                        else:
-                            log_message(f"⏭️ [SKIP] Skipping round {current_active_issue} due to previous loss.", "")
-
+                            log_message(f"✅ Auto Bet Placed [{current_active_issue}]: {next_pred}", "win")
     except Exception as e:
-        print("Background worker error:", str(e))
+        print("Worker error:", str(e))
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=background_bot_loop, trigger="interval", seconds=5)
 scheduler.start()
 
-# ----------------- EXACT HTML TEMPLATE ROUTE -----------------
 @app.route('/')
 def index():
     return render_template_string("""
@@ -255,7 +234,6 @@ def index():
     </style>
 </head>
 <body>
-
     <!-- 1. LOGIN SCREEN -->
     <div id="login-screen" class="container" style="display: {% if logged_in %}none{% else %}block{% endif %};">
         <div style="text-align: center; margin-bottom: 20px;">
@@ -263,20 +241,17 @@ def index():
             <h2>Ck Lottery</h2>
             <p style="font-size: 11px; color: #bfa16f;">Cloud 24/7 Server Login</p>
         </div>
-        
         <div class="card">
             <h3>📱 Enter Account Credentials</h3>
-            <form method="POST" action="/login">
-                <div class="input-group">
-                    <label>Phone Number</label>
-                    <input type="text" name="phone" placeholder="e.g. 959780000003" required>
-                </div>
-                <div class="input-group">
-                    <label>Password</label>
-                    <input type="password" name="password" placeholder="Enter your password" required>
-                </div>
-                <button type="submit" class="primary-btn" style="text-align: center;">🔓 Login & Connect</button>
-            </form>
+            <div class="input-group">
+                <label>Phone Number</label>
+                <input type="text" id="phone-input" placeholder="e.g. 959780000003">
+            </div>
+            <div class="input-group">
+                <label>Password</label>
+                <input type="password" id="password-input" placeholder="Enter your password">
+            </div>
+            <button id="login-btn" class="primary-btn" style="text-align: center;">🔓 Login & Connect</button>
             <div id="login-error" style="color: #ff3b3b; font-size: 12px; margin-top: 8px; text-align: center;">{{ login_error }}</div>
         </div>
     </div>
@@ -285,57 +260,80 @@ def index():
     <div id="dashboard-screen" class="container" style="display: {% if logged_in %}block{% else %}none{% endif %};">
         <div class="dash-header">
             <h3 style="font-size: 14px; color: #f3cf8c;">🤖 CLOUD SMART GUARD BOT</h3>
-            <button class="top-badge" id="user-balance">Bal: {{ balance }}</button>
+            <button class="top-badge" id="user-balance">Bal: Active</button>
         </div>
-
         <div class="card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0;">
-                <div style="font-size: 12px;">Cloud Status: <span style="color: #00ff88; font-weight: bold;">{% if is_running %}Running 24/7 🚀{% else %}Paused ⏸️{% endif %}</span></div>
-            </div>
-            <div id="result" style="color: #38bdf8; font-size: 15px; margin: 10px 0;">Bot is active on cloud server</div>
-
-            <form method="POST" action="/toggle">
-                <button type="submit" id="bot-toggle-btn" class="primary-btn {% if is_running %}stop-btn{% else %}{% endif %}">
-                    {% if is_running %}⏹ Stop Cloud Bot{% else %}🚀 Start Cloud Bot{% endif %}
-                </button>
-            </form>
-            <form method="POST" action="/logout">
-                <button type="submit" style="width:100%; margin-top:8px; background:none; border:none; color:#c9a973; font-size:11px; text-decoration:underline; cursor:pointer;">🚪 Logout / Change Account</button>
-            </form>
+            <button id="bot-toggle-btn" class="primary-btn {% if is_running %}stop-btn{% else %}{% endif %}" onclick="toggleBot()">
+                {% if is_running %}⏹ Stop Cloud Bot{% else %}🚀 Start Cloud Bot{% endif %}
+            </button>
+            <button onclick="logoutSession()" style="width:100%; margin-top:8px; background:none; border:none; color:#c9a973; font-size:11px; text-decoration:underline; cursor:pointer;">🚪 Logout / Change Account</button>
         </div>
-
         <div class="box">
             <p style="font-size: 12px;">📊 Win: <span id="win">{{ win_count }}</span> | Loss: <span id="loss">{{ loss_count }}</span></p>
-            <p style="font-size: 12px; margin-top: 4px;">🔥 Win Streak: <span id="win-streak">{{ win_streak }}</span> (Max: <span id="max-win-streak">{{ max_win_streak }}</span>)</p>
-            <p style="font-size: 12px; margin-top: 4px;">❄️ Loss Streak: <span id="loss-streak">{{ loss_streak }}</span> (Max: <span id="max-loss-streak">{{ max_loss_streak }}</span>)</p>
-            <p style="font-size: 12px; margin-top: 4px;">🔥 Current Level: Level <span id="current-level">{{ current_level }}</span></p>
-            <p style="font-size: 12px; margin-top: 4px; font-weight: bold; color: #f3cf8c;">📈 Net P/L: <span id="net-pl" style="color: {% if net_pl >= 0 %}#00ff88{% else %}#ff3b3b{% endif %};">{{ net_pl }}</span></p>
+            <p style="font-size: 12px; margin-top: 4px;">📈 Net P/L: <span id="net-pl">{{ net_pl }}</span></p>
         </div>
-
-        <h3 style="font-size: 13px; color: #c9a973; margin-top: 15px; text-align: left;">📜 Cloud Live Action & Logs</h3>
+        <h3 style="font-size: 13px; color: #c9a973; margin-top: 15px; text-align: left;">📜 Cloud Live Logs</h3>
         <div id="historyBox">
             {% for log in logs %}
                 <div class="{{ log.type }}">[{{ log.time }}] {{ log.msg }}</div>
             {% endfor %}
         </div>
     </div>
+
     <script>
-        // Auto refresh page every 4 seconds to sync live cloud logs and server stats
-        setTimeout(function(){ location.reload(); }, 4000);
+        const loginBtn = document.getElementById('login-btn');
+        const loginError = document.getElementById('login-error');
+
+        function generateRandomHex() {
+            return [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+        }
+
+        loginBtn.addEventListener('click', async () => {
+            const phone = document.getElementById('phone-input').value.trim();
+            const password = document.getElementById('password-input').value.trim();
+
+            if (!phone || !password) {
+                loginError.innerText = "Please enter phone number and password!";
+                return;
+            }
+            loginBtn.innerText = "Logging in...";
+
+            let response = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone, password })
+            });
+            let data = await response.json();
+            if (data.success) {
+                location.reload();
+            } else {
+                loginError.innerText = data.msg || "Login failed!";
+                loginBtn.innerText = "🔓 Login & Connect";
+            }
+        });
+
+        async function toggleBot() {
+            let res = await fetch('/api/toggle', { method: 'POST' });
+            let data = await res.json();
+            location.reload();
+        }
+
+        async function logoutSession() {
+            await fetch('/api/logout', { method: 'POST' });
+            location.reload();
+        }
     </script>
 </body>
 </html>
-    """, logged_in=bool(bot_state["token"]), is_running=bot_state["is_running"], 
+    """, logged_in=bool(bot_state["token"]), is_running=bot_state["is_running"],
        win_count=bot_state["win_count"], loss_count=bot_state["loss_count"],
-       win_streak=bot_state["win_streak"], max_win_streak=bot_state["max_win_streak"],
-       loss_streak=bot_state["loss_streak"], max_loss_streak=bot_state["max_loss_streak"],
-       current_level=bot_state["current_level"], net_pl=bot_state["net_pl"],
-       logs=bot_state["logs"], balance="Live", login_error="")
+       net_pl=bot_state["net_pl"], logs=bot_state["logs"], login_error="")
 
-@app.route('/login', methods=['POST'])
-def login():
-    phone = request.form.get('phone')
-    password = request.form.get('password')
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    req = request.json
+    phone = req.get('phone')
+    password = req.get('password')
     
     timestamp_val = int(time.time())
     random_val = generate_random_hex()
@@ -354,33 +352,28 @@ def login():
             "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
         }, timeout=10)
         data = res.json()
-        
         if data and data.get("code") == 0:
             token = data.get("token") or (data.get("data") if isinstance(data.get("data"), str) else data.get("data", {}).get("token"))
             if token:
                 bot_state["token"] = token
                 bot_state["is_running"] = True
-                log_message("Cloud bot logged in and auto-started successfully!", "win")
+                log_message("Cloud bot logged in successfully!", "win")
+                return jsonify({"success": True})
+        return jsonify({"success": False, "msg": data.get("msg", "Invalid credentials")})
     except Exception as e:
-        log_message("Login network error.", "loss")
+        return jsonify({"success": False, "msg": "Network error"})
 
-    return redirect(url_for('index'))
-
-@app.route('/toggle', methods=['POST'])
-def toggle():
+@app.route('/api/toggle', methods=['POST'])
+def api_toggle():
     bot_state["is_running"] = not bot_state["is_running"]
-    if bot_state["is_running"]:
-        log_message("Cloud bot resumed.", "win")
-    else:
-        log_message("Cloud bot paused by user.", "loss")
-    return redirect(url_for('index'))
+    return jsonify({"is_running": bot_state["is_running"]})
 
-@app.route('/logout', methods=['POST'])
-def logout():
+@app.route('/api/logout', methods=['POST'])
+def api_logout():
     bot_state["token"] = ""
     bot_state["is_running"] = False
     bot_state["logs"] = []
-    return redirect(url_for('index'))
+    return jsonify({"success": True})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
