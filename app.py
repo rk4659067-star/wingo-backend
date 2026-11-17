@@ -3,14 +3,15 @@ from flask import Flask, render_template_string
 
 app = Flask(__name__)
 
-# Aapka 100% Exact Original HTML/JS Code jo Render par as it is run hoga
+FIREBASE_URL = "https://set2dlive-93ec7-default-rtdb.firebaseio.com/"
+
 ORIGINAL_HTML_CODE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔥 WinGo Fully Automatic Bot (Clean Trend Predictor)</title>
+    <title>🔥 WinGo Fully Automatic Bot (Firebase Persistent)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
         body { background: #020617; color: #fff; text-align: center; padding: 15px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
@@ -22,17 +23,16 @@ ORIGINAL_HTML_CODE = """
         .number { font-size: 22px; color: #2ecc71; font-weight: bold; }
         .timer-display { font-size: 16px; color: #e74c3c; font-weight: bold; background: #2a1215; padding: 4px 8px; border-radius: 6px; border: 1px solid #723232; display: inline-block; }
         #result { margin-top: 10px; font-size: 18px; font-weight: bold; color: #38bdf8; text-align: center; }
-        #historyBox { max-height: 140px; overflow-y: auto; background: #111; padding: 10px; margin-top: 15px; border-radius: 10px; text-align: left; font-size: 12px; }
-        .win { color: #00ff88; margin-bottom: 4px; }
-        .loss { color: #ff3b3b; margin-bottom: 4px; }
+        #historyBox { max-height: 180px; overflow-y: auto; background: #111; padding: 10px; margin-top: 15px; border-radius: 10px; text-align: left; font-size: 11px; }
+        .history-row { display: flex; justify-content: space-between; padding: 6px 4px; border-bottom: 1px solid #222; font-family: monospace; }
+        .win { color: #00ff88; font-weight: bold; }
+        .loss { color: #ff3b3b; font-weight: bold; }
         .box { margin-top: 15px; background: #1e1e1e; padding: 12px; border-radius: 8px; text-align: left; }
         .primary-btn { width: 100%; padding: 14px; background: linear-gradient(to right, #f3cf8c, #c99b46); border: none; border-radius: 8px; color: #1a0f0f; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 10px; box-shadow: 0 4px 10px rgba(212, 163, 83, 0.3); }
         .stop-btn { background: linear-gradient(to right, #e74c3c, #c0392b); color: #fff; }
         .input-group { margin-bottom: 10px; }
         .input-group label { display: block; font-size: 12px; color: #c9a973; margin-bottom: 4px; }
         .input-group input, .input-group select { width: 100%; padding: 10px; background-color: #0f0707; border: 1px solid #573333; border-radius: 6px; color: #fff; font-size: 13px; outline: none; }
-        .row-flex { display: flex; gap: 10px; }
-        .row-flex .input-group { flex: 1; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </head>
@@ -43,7 +43,7 @@ ORIGINAL_HTML_CODE = """
         <div style="text-align: center; margin-bottom: 20px;">
             <div style="font-size: 30px;">🟡</div>
             <h2>Ck Lottery</h2>
-            <p style="font-size: 11px; color: #bfa16f;">Direct Mobile Login</p>
+            <p style="font-size: 11px; color: #bfa16f;">Firebase Persistent Bot</p>
         </div>
         
         <div class="card">
@@ -85,8 +85,8 @@ ORIGINAL_HTML_CODE = """
             </div>
 
             <div class="input-group">
-                <label>Custom Bet Count Levels (Comma Separated)</label>
-                <input type="text" id="custom-bet-counts" value="1, 10, 100, 1000, 10000, 100000" placeholder="e.g. 1, 10, 100, 1000">
+                <label>Custom Bet Count Levels</label>
+                <input type="text" id="custom-bet-counts" value="1, 10, 100, 1000, 10000, 100000">
             </div>
             
             <div style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0;">
@@ -110,11 +110,12 @@ ORIGINAL_HTML_CODE = """
             <p style="font-size: 12px; margin-top: 4px; font-weight: bold; color: #f3cf8c;">📈 Net P/L: <span id="net-pl">0</span></p>
         </div>
 
-        <h3 style="font-size: 13px; color: #c9a973; margin-top: 15px; text-align: left;">📜 Live Action & Logs</h3>
+        <h3 style="font-size: 13px; color: #c9a973; margin-top: 15px; text-align: left;">📜 History (Round | No. | Result | Status)</h3>
         <div id="historyBox"></div>
     </div>
 
     <script>
+        const FIREBASE_DB_URL = "https://set2dlive-93ec7-default-rtdb.firebaseio.com/";[span_1](start_span)[span_1](end_span)
         const loginScreen = document.getElementById('login-screen');
         const dashboardScreen = document.getElementById('dashboard-screen');
         const loginBtn = document.getElementById('login-btn');
@@ -137,6 +138,56 @@ ORIGINAL_HTML_CODE = """
         let isBotRunning = false;
         let canPlaceBet = true;
 
+        async function saveStateToFirebase() {
+            try {
+                let stateData = {
+                    winCount, lossCount, currentWinStreak, maxWinStreak,
+                    currentLossStreak, maxLossStreak, currentLevel, netProfitLoss,
+                    historyList: historyList.slice(0, 30)
+                };
+                await fetch(FIREBASE_DB_URL + "bot_state.json", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(stateData)
+                });
+            } catch (e) { console.error("Firebase save error", e); }
+        }
+
+        async function loadStateFromFirebase() {
+            try {
+                let res = await fetch(FIREBASE_DB_URL + "bot_state.json");
+                let data = await res.json();
+                if (data) {
+                    winCount = data.winCount || 0;
+                    lossCount = data.lossCount || 0;
+                    currentWinStreak = data.currentWinStreak || 0;
+                    maxWinStreak = data.maxWinStreak || 0;
+                    currentLossStreak = data.currentLossStreak || 0;
+                    maxLossStreak = data.maxLossStreak || 0;
+                    currentLevel = data.currentLevel || 1;
+                    netProfitLoss = data.netProfitLoss || 0;
+                    historyList = data.historyList || [];
+                    updateUIStats();
+                }
+            } catch (e) { console.error("Firebase load error", e); }
+        }
+
+        function updateUIStats() {
+            document.getElementById("win").innerText = winCount;
+            document.getElementById("loss").innerText = lossCount;
+            document.getElementById("win-streak").innerText = currentWinStreak;
+            document.getElementById("max-win-streak").innerText = maxWinStreak;
+            document.getElementById("loss-streak").innerText = currentLossStreak;
+            document.getElementById("max-loss-streak").innerText = maxLossStreak;
+            document.getElementById("current-level").innerText = currentLevel;
+            document.getElementById("current-bet-count").innerText = getCurrentBetCount();
+            document.getElementById("bet-amount").innerText = getCurrentTotalBetAmount();
+            let netPlElem = document.getElementById("net-pl");
+            netPlElem.innerText = (netProfitLoss >= 0 ? "+" : "") + netProfitLoss;
+            netPlElem.style.color = netProfitLoss >= 0 ? "#00ff88" : "#ff3b3b";
+            document.getElementById("historyBox").innerHTML = historyList.join("");
+        }
+
         function getActiveBetCountsArray() {
             let inputVal = document.getElementById("custom-bet-counts").value;
             let arr = inputVal.split(',').map(item => parseInt(item.trim())).filter(num => !isNaN(num) && num > 0);
@@ -157,34 +208,26 @@ ORIGINAL_HTML_CODE = """
 
         function calculateDynamicSignature(payloadObj) {
             let t = { ...payloadObj };
-            delete t.signature;
-            delete t.timestamp;
-            delete t.track;
-            delete t.xosoBettingData;
-
+            delete t.signature; delete t.timestamp; delete t.track; delete t.xosoBettingData;
             const sortedObj = {};
             Object.keys(t).sort().forEach(r => {
                 const o = t[r];
-                if (o !== null && o !== "" && o !== undefined) {
-                    sortedObj[r] = (o === 0) ? 0 : o;
-                }
+                if (o !== null && o !== "" && o !== undefined) sortedObj[r] = (o === 0) ? 0 : o;
             });
-
-            let jsonStr = JSON.stringify(sortedObj);
-            let md5Hash = CryptoJS.MD5(jsonStr).toString().toUpperCase();
-            return md5Hash.slice(0, 32);
+            return CryptoJS.MD5(JSON.stringify(sortedObj)).toString().toUpperCase().slice(0, 32);
         }
 
         function generateRandomHex() {
             return [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
         }
 
-        window.addEventListener('DOMContentLoaded', () => {
+        window.addEventListener('DOMContentLoaded', async () => {
             const savedToken = localStorage.getItem("wingo_phone_token");
             if (savedToken) {
                 activeToken = savedToken;
                 loginScreen.style.display = 'none';
                 dashboardScreen.style.display = 'block';
+                await loadStateFromFirebase();
                 fetchUserBalance();
                 fetchLiveData();
                 setInterval(fetchLiveData, 1000);
@@ -194,66 +237,37 @@ ORIGINAL_HTML_CODE = """
         loginBtn.addEventListener('click', async () => {
             const phone = document.getElementById('phone-input').value.trim();
             const password = document.getElementById('password-input').value.trim();
-
-            if (!phone || !password) {
-                loginError.innerText = "Please enter phone number and password!";
-                return;
-            }
+            if (!phone || !password) { loginError.innerText = "Please enter phone and password!"; return; }
 
             loginBtn.innerText = "Logging in...";
-            loginError.innerText = "";
-
             let timestampVal = Math.floor(Date.now() / 1000);
             let randomVal = generateRandomHex();
-
-            let loginPayload = {
-                username: phone, pwd: password, phonetype: 1, logintype: "mobile",
-                packId: "", deviceId: "451af594f1be19145249ec1687a6bef2",
-                pixelId: "", fbcId: "", fbc: "", fbp: "", adId: "",
-                language: 7, random: randomVal, timestamp: timestampVal
-            };
+            let loginPayload = { username: phone, pwd: password, phonetype: 1, logintype: "mobile", packId: "", deviceId: "451af594f1be19145249ec1687a6bef2", pixelId: "", fbcId: "", fbc: "", fbp: "", adId: "", language: 7, random: randomVal, timestamp: timestampVal };
             loginPayload.signature = calculateDynamicSignature(loginPayload);
 
             try {
                 let response = await fetch("https://ckygjf6r.com/api/webapi/Login", {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json;charset=UTF-8",
-                        "Accept": "application/json, text/plain, */*",
-                        "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
-                        "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-                    },
+                    headers: { "Content-Type": "application/json;charset=UTF-8" },
                     body: JSON.stringify(loginPayload)
                 });
-
                 let data = await response.json();
-                
                 if (data && data.code === 0) {
                     if (data.token) activeToken = data.token;
-                    else if (data.data) {
-                        if (typeof data.data === 'string') activeToken = data.data;
-                        else if (data.data.token) activeToken = data.data.token;
-                    }
-
-                    if (!activeToken && data.data) {
-                        activeToken = JSON.stringify(data.data);
-                    }
-
+                    else if (data.data) { activeToken = typeof data.data === 'string' ? data.data : data.data.token; }
                     localStorage.setItem("wingo_phone_token", activeToken);
 
                     loginScreen.style.display = 'none';
                     dashboardScreen.style.display = 'block';
+                    await loadStateFromFirebase();
                     fetchUserBalance();
                     fetchLiveData();
                     setInterval(fetchLiveData, 1000);
                 } else {
-                    loginError.innerText = data.msg || "Login failed! Check credentials.";
+                    loginError.innerText = data.msg || "Login failed!";
                     loginBtn.innerText = "🔓 Login & Connect";
                 }
-            } catch (err) {
-                loginError.innerText = "Network error during login.";
-                loginBtn.innerText = "🔓 Login & Connect";
-            }
+            } catch (err) { loginError.innerText = "Network error during login."; loginBtn.innerText = "🔓 Login & Connect"; }
         });
 
         function logoutSession() {
@@ -269,31 +283,18 @@ ORIGINAL_HTML_CODE = """
                 let randomVal = generateRandomHex();
                 let balPayload = { language: 7, random: randomVal, timestamp: timestampVal };
                 balPayload.signature = calculateDynamicSignature(balPayload);
-
                 let response = await fetch("https://ckygjf6r.com/api/webapi/GetBalance", {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json;charset=UTF-8",
-                        "authorization": "Bearer " + activeToken,
-                        "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
-                        "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-                    },
+                    headers: { "Content-Type": "application/json;charset=UTF-8", "authorization": "Bearer " + activeToken },
                     body: JSON.stringify(balPayload)
                 });
                 let data = await response.json();
-                
                 let balValue = "0";
                 if (data && data.code === 0 && data.data !== undefined) {
-                    if (typeof data.data === 'object' && data.data !== null) {
-                        balValue = data.data.amount ?? data.data.money ?? data.data.balance ?? Object.values(data.data)[0] ?? "0";
-                    } else {
-                        balValue = data.data;
-                    }
+                    balValue = typeof data.data === 'object' ? (data.data.amount ?? data.data.money ?? data.data.balance ?? "0") : data.data;
                 }
                 userBalance.innerText = "Bal: " + balValue;
-            } catch (err) {
-                userBalance.innerText = "Bal: Err";
-            }
+            } catch (err) { userBalance.innerText = "Bal: Err"; }
         }
 
         function toggleBot() {
@@ -302,57 +303,43 @@ ORIGINAL_HTML_CODE = """
             if (isBotRunning) {
                 btn.innerText = "⏹ Stop Smart-Auto Bot";
                 btn.className = "primary-btn stop-btn";
-                currentLevel = 1;
-                netProfitLoss = 0;
-                winCount = 0; lossCount = 0;
-                currentWinStreak = 0; maxWinStreak = 0;
-                currentLossStreak = 0; maxLossStreak = 0;
-                canPlaceBet = true;
-                realBetIssues.clear();
-                lastBettedIssue = "";
-                logMessage("Smart-Auto bot started successfully!", "win");
+                addHistoryRecord("SYSTEM", "-", "-", "STARTED", "win");
             } else {
                 btn.innerText = "🚀 Start Smart-Auto Bot";
                 btn.className = "primary-btn";
-                logMessage("Bot stopped by user.", "loss");
+                addHistoryRecord("SYSTEM", "-", "-", "STOPPED", "loss");
             }
+            saveStateToFirebase();
         }
 
-        function logMessage(msg, type = "") {
-            let cls = type === "win" ? "win" : (type === "loss" ? "loss" : "");
-            historyList.unshift(`<div class="${cls}">[${new Date().toLocaleTimeString()}] ${msg}</div>`);
-            document.getElementById("historyBox").innerHTML = historyList.join("");
+        function addHistoryRecord(round, num, resBS, status, type) {
+            let statusClass = type === "win" ? "win" : "loss";
+            let rowHtml = `<div class="history-row">
+                <span>${round}</span>
+                <span>${num}</span>
+                <span>${resBS}</span>
+                <span class="${statusClass}">${status}</span>
+            </div>`;
+            historyList.unshift(rowHtml);
+            updateUIStats();
+            saveStateToFirebase();
         }
 
         async function fetchLiveData() {
             if (dashboardScreen.style.display === 'none') return;
-
             const selectedTypeId = parseInt(document.getElementById("game-type-id").value) || 30;
-            const url = "https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList";
-            
             let timestampVal = Math.floor(Date.now() / 1000);
             let randomVal = generateRandomHex();
-
-            const payload = {
-                pageSize: 10, pageNo: 1, typeId: selectedTypeId, language: 7,
-                random: randomVal, timestamp: timestampVal
-            };
+            const payload = { pageSize: 10, pageNo: 1, typeId: selectedTypeId, language: 7, random: randomVal, timestamp: timestampVal };
             payload.signature = calculateDynamicSignature(payload);
 
             try {
-                let response = await fetch(url, {
+                let response = await fetch("https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList", {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json;charset=UTF-8",
-                        "authorization": "Bearer " + activeToken,
-                        "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
-                        "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-                    },
+                    headers: { "Content-Type": "application/json;charset=UTF-8", "authorization": "Bearer " + activeToken },
                     body: JSON.stringify(payload)
                 });
-
                 let data = await response.json();
-                
                 if (data && data.code === 0 && data.data) {
                     let list = data.data.list || data.data.data || data.data;
                     if (Array.isArray(list) && list.length > 0) {
@@ -362,14 +349,12 @@ ORIGINAL_HTML_CODE = """
 
                         let epochSeconds = Math.floor(Date.now() / 1000);
                         let remainingSeconds = 30 - (epochSeconds % 30);
-                        let timerFormatted = "00:" + (remainingSeconds < 10 ? "0" : "") + remainingSeconds;
-                        document.getElementById("game-timer").innerText = timerFormatted;
+                        document.getElementById("game-timer").innerText = "00:" + (remainingSeconds < 10 ? "0" : "") + remainingSeconds;
 
                         if (issueNum && !processedPeriods.has(issueNum)) {
                             processedPeriods.add(issueNum);
                             document.getElementById("latest-period").innerText = issueNum;
                             document.getElementById("latest-number").innerText = num;
-
                             checkResultAndProgression(issueNum, num);
                             numbers.push(num);
                         }
@@ -384,15 +369,13 @@ ORIGINAL_HTML_CODE = """
                                     realBetIssues.add(currentActiveIssue);
                                     placeRealBet(nextPred, selectedTypeId, currentActiveIssue);
                                 } else {
-                                    logMessage(`⏭️ [SKIP] Previous bet lost. Skipping round ${currentActiveIssue} (Tracking virtually).`, "");
+                                    addHistoryRecord(currentActiveIssue, "-", "-", "SKIPPED", "loss");
                                 }
                             }
                         }
                     }
                 }
-            } catch (error) {
-                console.error("Error fetching live data:", error);
-            }
+            } catch (error) { console.error("Fetch error:", error); }
         }
 
         function getBS(n) { return n <= 4 ? "S" : "B"; }
@@ -403,27 +386,13 @@ ORIGINAL_HTML_CODE = """
                 document.getElementById("conf").innerText = "0%";
                 return "";
             }
-
             let recentBS = numbers.map(getBS);
             let fullStr = recentBS.join(""); 
-            let prediction = "";
-            let patternName = "Standard Trend";
-            let confidence = 85;
+            let prediction = "", patternName = "Standard Trend", confidence = 85;
 
-            if (fullStr.endsWith("SBS")) {
-                prediction = "BIG";
-                patternName = "Zig-Zag Trend (SBS)";
-                confidence = 90;
-            } else if (fullStr.endsWith("BSB")) {
-                prediction = "SMALL";
-                patternName = "Zig-Zag Trend (BSB)";
-                confidence = 90;
-            } else {
-                let lastBS = recentBS[recentBS.length - 1];
-                prediction = (lastBS === "S") ? "SMALL" : "BIG";
-                patternName = "Same Trend Follow";
-                confidence = 75;
-            }
+            if (fullStr.endsWith("SBS")) { prediction = "BIG"; patternName = "Zig-Zag (SBS)"; confidence = 90; }
+            else if (fullStr.endsWith("BSB")) { prediction = "SMALL"; patternName = "Zig-Zag (BSB)"; confidence = 90; }
+            else { prediction = (recentBS[recentBS.length - 1] === "S") ? "SMALL" : "BIG"; patternName = "Same Trend Follow"; confidence = 75; }
 
             document.getElementById("conf").innerText = confidence + "%";
             document.getElementById("result").innerText = `🤖 [${patternName}] ➔ ${prediction}`;
@@ -433,118 +402,68 @@ ORIGINAL_HTML_CODE = """
 
         function checkResultAndProgression(issueNum, n) {
             if (!lastPrediction) return;
-
             let actual = getBS(n);
             let isWin = (lastPrediction === "SMALL" && actual === "S") || (lastPrediction === "BIG" && actual === "B");
             let wasRealBet = realBetIssues.has(issueNum);
 
-            if (isWin) {
-                winCount++;
-                currentWinStreak++;
-                currentLossStreak = 0;
-                if (currentWinStreak > maxWinStreak) maxWinStreak = currentWinStreak;
-            } else {
-                lossCount++;
-                currentLossStreak++;
-                currentWinStreak = 0;
-                if (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak;
-            }
+            if (isWin) { winCount++; currentWinStreak++; currentLossStreak = 0; if (currentWinStreak > maxWinStreak) maxWinStreak = currentWinStreak; }
+            else { lossCount++; currentLossStreak++; currentWinStreak = 0; if (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak; }
+
+            let levels = getActiveBetCountsArray();
+            let currentTotalBet = getCurrentTotalBetAmount();
 
             if (wasRealBet) {
-                let currentTotalBet = getCurrentTotalBetAmount();
-                let levels = getActiveBetCountsArray();
-
                 if (isWin) {
-                    let wonAmount = currentTotalBet; 
-                    netProfitLoss += wonAmount;
-                    logMessage(`Round Win [Real Bet]! Actual: ${n} [${actual}] | +${wonAmount} Won. Continuing real bets.`, "win");
-                    currentLevel = 1;
-                    canPlaceBet = true;
+                    netProfitLoss += currentTotalBet;
+                    addHistoryRecord(issueNum, n, actual, "WIN +" + currentTotalBet, "win");
+                    currentLevel = 1; canPlaceBet = true;
                 } else {
-                    let lostAmount = currentTotalBet;
-                    netProfitLoss -= lostAmount;
-                    logMessage(`Round Loss [Real Bet]! Actual: ${n} [${actual}] | -${lostAmount} Lost. Skipping next bet until a win occurs.`, "loss");
+                    netProfitLoss -= currentTotalBet;
+                    addHistoryRecord(issueNum, n, actual, "LOSS -" + currentTotalBet, "loss");
                     currentLevel++;
-                    if (currentLevel > levels.length) {
-                        currentLevel = 1;
-                    }
+                    if (currentLevel > levels.length) currentLevel = 1;
                     canPlaceBet = false;
                 }
             } else {
-                if (isWin) {
-                    logMessage(`Skipped Round Result: WIN ✅ (${n} [${actual}]). Target win achieved! Resuming real bets on next round.`, "win");
-                    canPlaceBet = true;
-                } else {
-                    logMessage(`Skipped Round Result: LOSS ❌ (${n} [${actual}]). Still waiting for a win to resume real betting.`, "loss");
-                    canPlaceBet = false;
+                if (isWin) { 
+                    addHistoryRecord(issueNum, n, actual, "SKIP WIN", "win"); 
+                    canPlaceBet = true; 
+                } else { 
+                    addHistoryRecord(issueNum, n, actual, "SKIP LOSS", "loss"); 
+                    canPlaceBet = false; 
                 }
             }
-
-            let nextTotalBet = getCurrentTotalBetAmount();
-            let nextBetCount = getCurrentBetCount();
-            document.getElementById("win").innerText = winCount;
-            document.getElementById("loss").innerText = lossCount;
-            document.getElementById("win-streak").innerText = currentWinStreak;
-            document.getElementById("max-win-streak").innerText = maxWinStreak;
-            document.getElementById("loss-streak").innerText = currentLossStreak;
-            document.getElementById("max-loss-streak").innerText = maxLossStreak;
-            document.getElementById("current-level").innerText = currentLevel;
-            document.getElementById("current-bet-count").innerText = nextBetCount;
-            document.getElementById("bet-amount").innerText = nextTotalBet;
-            document.getElementById("net-pl").innerText = (netProfitLoss >= 0 ? "+" : "") + netProfitLoss;
-            document.getElementById("net-plstyle").color = netProfitLoss >= 0 ? "#00ff88" : "#ff3b3b";
-            
             fetchUserBalance();
         }
 
         async function placeRealBet(prediction, typeIdVal, targetIssue) {
             if (!prediction || !targetIssue) return;
-
             let baseAmt = parseInt(document.getElementById("base-amount").value) || 10;
             let finalBetCount = getCurrentBetCount(); 
             let selectTypeVal = (prediction === "BIG") ? 13 : 14;
-
             let timestampVal = Math.floor(Date.now() / 1000);
             let randomVal = generateRandomHex();
 
             const betPayload = {
-                typeId: typeIdVal, 
-                issuenumber: targetIssue, 
-                amount: baseAmt,
-                betCount: finalBetCount,
-                gameType: 2, 
-                selectType: selectTypeVal,
-                language: 7, 
-                random: randomVal, 
-                timestamp: timestampVal
+                typeId: typeIdVal, issuenumber: targetIssue, amount: baseAmt,
+                betCount: finalBetCount, gameType: 2, selectType: selectTypeVal,
+                language: 7, random: randomVal, timestamp: timestampVal
             };
             betPayload.signature = calculateDynamicSignature(betPayload);
 
             try {
                 let response = await fetch("https://ckygjf6r.com/api/webapi/GameBetting", {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json;charset=UTF-8",
-                        "authorization": "Bearer " + activeToken,
-                        "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
-                        "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-                    },
+                    headers: { "Content-Type": "application/json;charset=UTF-8", "authorization": "Bearer " + activeToken },
                     body: JSON.stringify(betPayload)
                 });
-
                 let resData = await response.json();
-                
                 if (resData && (resData.code === 0 || resData.msg === "Succeed" || resData.msg === "Bet success")) {
-                    logMessage(`✅ Bet Placed [${targetIssue}]: ${prediction} (Total: ${getCurrentTotalBetAmount()})`, "win");
                     fetchUserBalance();
                 } else {
-                    let serverMsg = resData.msg || "Unknown Error";
-                    let serverCode = resData.code ?? "No Code";
-                    logMessage(`❌ Bet Fail [${targetIssue}] (Code: ${serverCode}): ${serverMsg}`, "loss");
+                    console.error("Bet error:", resData.msg);
                 }
-            } catch (err) {
-                logMessage(`❌ Network error during betting.`, "loss");
-            }
+            } catch (err) { console.error("Network error during betting."); }
         }
     </script>
 </body>
