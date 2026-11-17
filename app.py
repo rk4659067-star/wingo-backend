@@ -2,6 +2,7 @@ import time
 import hashlib
 import json
 import random
+import os
 import requests
 from flask import Flask, render_template_string, request, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -459,4 +460,5 @@ def api_logout():
     return jsonify({"success": True})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
