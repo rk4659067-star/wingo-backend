@@ -97,12 +97,16 @@ def background_bot_loop():
         }
         live_payload["signature"] = calculate_dynamic_signature(live_payload)
 
-        res = requests.post("https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList", json=live_payload, headers={
+        headers = {
             "Content-Type": "application/json;charset=UTF-8",
+            "Accept": "application/json, text/plain, */*",
             "authorization": "Bearer " + bot_state["token"],
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
             "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
             "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-        }, timeout=10)
+        }
+
+        res = requests.post("https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList", json=live_payload, headers=headers, timeout=10)
 
         data = res.json()
         if data and data.get("code") == 0 and data.get("data"):
@@ -188,12 +192,7 @@ def background_bot_loop():
                                 "timestamp": t_val
                             }
                             bet_payload["signature"] = calculate_dynamic_signature(bet_payload)
-                            requests.post("https://ckygjf6r.com/api/webapi/GameBetting", json=bet_payload, headers={
-                                "Content-Type": "application/json;charset=UTF-8",
-                                "authorization": "Bearer " + bot_state["token"],
-                                "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
-                                "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-                            }, timeout=10)
+                            requests.post("https://ckygjf6r.com/api/webapi/GameBetting", json=bet_payload, headers=headers, timeout=10)
                             log_message(f"✅ Auto Bet Placed [{current_active_issue}]: {next_pred}", "win")
     except Exception as e:
         print("Worker error:", str(e))
@@ -345,12 +344,18 @@ def api_login():
     }
     login_payload["signature"] = calculate_dynamic_signature(login_payload)
 
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        "x-app-type": "PWA", 
+        "ar-origin": "https://cklottery.cc",
+        "origin": "https://cklottery.cc", 
+        "referer": "https://cklottery.cc/"
+    }
+
     try:
-        res = requests.post("https://ckygjf6r.com/api/webapi/Login", json=login_payload, headers={
-            "Content-Type": "application/json;charset=UTF-8",
-            "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
-            "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-        }, timeout=10)
+        res = requests.post("https://ckygjf6r.com/api/webapi/Login", json=login_payload, headers=headers, timeout=15)
         data = res.json()
         if data and data.get("code") == 0:
             token = data.get("token") or (data.get("data") if isinstance(data.get("data"), str) else data.get("data", {}).get("token"))
@@ -361,7 +366,7 @@ def api_login():
                 return jsonify({"success": True})
         return jsonify({"success": False, "msg": data.get("msg", "Invalid credentials")})
     except Exception as e:
-        return jsonify({"success": False, "msg": "Network error"})
+        return jsonify({"success": False, "msg": "Network error: " + str(e)})
 
 @app.route('/api/toggle', methods=['POST'])
 def api_toggle():
