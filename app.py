@@ -1,243 +1,16 @@
-import time
-import hashlib
-import json
-import random
 import os
-import requests
-from flask import Flask, render_template_string, request, jsonify
-from apscheduler.schedulers.background import BackgroundScheduler
+from flask import Flask, render_template_string
 
 app = Flask(__name__)
 
-# Global Bot State (100% replicating your frontend logic in Python backend)
-bot_state = {
-    "is_running": False,
-    "phone": "",
-    "password": "",
-    "token": "",
-    "game_type_id": 30,
-    "base_amount": 10,
-    "custom_bet_counts": [1, 10, 100, 1000, 10000, 100000],
-    
-    # Statistics & Progress (Same as your JS variables)
-    "win_count": 0,
-    "loss_count": 0,
-    "win_streak": 0,
-    "max_win_streak": 0,
-    "loss_streak": 0,
-    "max_loss_streak": 0,
-    "current_level": 1,
-    "net_pl": 0,
-    
-    # Internal Tracking
-    "numbers": [],
-    "last_prediction": "",
-    "processed_periods": set(),
-    "last_betted_issue": "",
-    "real_bet_issues": set(),
-    "can_place_bet": True,
-    "logs": []
-}
-
-def log_message(msg, type_cls=""):
-    timestamp = time.strftime("%H:%M:%S")
-    entry = {"time": timestamp, "msg": msg, "type": type_cls}
-    bot_state["logs"].insert(0, entry)
-    if len(bot_state["logs"]) > 100:
-        bot_state["logs"].pop()
-
-def calculate_dynamic_signature(payload_obj):
-    t = payload_obj.copy()
-    t.pop('signature', None)
-    t.pop('timestamp', None)
-    t.pop('track', None)
-    t.pop('xosoBettingData', None)
-
-    sorted_obj = {}
-    for r in sorted(t.keys()):
-        o = t[r]
-        if o is not None and o != "" and o is not None:
-            sorted_obj[r] = 0 if o == 0 else o
-
-    json_str = json.dumps(sorted_obj, separators=(',', ':'))
-    md5_hash = hashlib.md5(json_str.encode('utf-8')).hexdigest().upper()
-    return md5_hash[:32]
-
-def generate_random_hex():
-    return ''.join(random.choice('0123456789abcdef') for _ in range(32))
-
-def get_active_bet_counts_array():
-    return bot_state["custom_bet_counts"]
-
-def getCurrentBetCount():
-    levels = get_active_bet_counts_array()
-    idx = min(bot_state["current_level"] - 1, len(levels) - 1)
-    return levels[idx]
-
-def getCurrentTotalBetAmount():
-    return bot_state["base_amount"] * getCurrentBetCount()
-
-def get_bs(n):
-    return "S" if n <= 4 else "B"
-
-def analyze_pattern():
-    numbers = bot_state["numbers"]
-    if len(numbers) < 3:
-        return ""
-    
-    recent_bs = [get_bs(n) for n in numbers]
-    full_str = "".join(recent_bs)
-    
-    if full_str.endswith("SBS"):
-        return "BIG"
-    elif full_str.endswith("BSB"):
-        return "SMALL"
-    else:
-        last_bs = recent_bs[-1]
-        return "SMALL" if last_bs == "S" else "BIG"
-
-# ----------------- PURE PYTHON 24/7 BACKGROUND WORKER -----------------
-def background_bot_loop():
-    if not bot_state["is_running"] or not bot_state["token"]:
-        return
-
-    try:
-        timestamp_val = int(time.time())
-        random_val = generate_random_hex()
-        live_payload = {
-            "pageSize": 10, "pageNo": 1, "typeId": bot_state["game_type_id"],
-            "language": 7, "random": random_val, "timestamp": timestamp_val
-        }
-        live_payload["signature"] = calculate_dynamic_signature(live_payload)
-
-        headers = {
-            "Content-Type": "application/json;charset=UTF-8",
-            "authorization": "Bearer " + bot_state["token"],
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-            "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
-            "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
-        }
-
-        res = requests.post("https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList", json=live_payload, headers=headers, timeout=10)
-        data = res.json()
-
-        if data and data.get("code") == 0 and data.get("data"):
-            lst = data["data"].get("list") or data["data"].get("data") or data["data"]
-            if isinstance(lst, list) and len(lst) > 0:
-                latest = lst[0]
-                issue_num = str(latest.get("issueNumber") or latest.get("issuenumber"))
-                num = int(latest.get("number"))
-
-                epoch_sec = int(time.time())
-                remaining_sec = 30 - (epoch_sec % 30)
-
-                # Process Period Result
-                if issue_num and issue_num not in bot_state["processed_periods"]:
-                    bot_state["processed_periods"].add(issue_num)
-                    
-                    if bot_state["last_prediction"]:
-                        actual = get_bs(num)
-                        is_win = (bot_state["last_prediction"] == "SMALL" and actual == "S") or (bot_state["last_prediction"] == "BIG" and actual == "B")
-                        was_real_bet = issue_num in bot_state["real_bet_issues"]
-
-                        if is_win:
-                            bot_state["win_count"] += 1
-                            bot_state["win_streak"] += 1
-                            bot_state["loss_streak"] = 0
-                            if bot_state["win_streak"] > bot_state["max_win_streak"]:
-                                bot_state["max_win_streak"] = bot_state["win_streak"]
-                        else:
-                            bot_state["loss_count"] += 1
-                            bot_state["loss_streak"] += 1
-                            bot_state["win_streak"] = 0
-                            if bot_state["loss_streak"] > bot_state["max_loss_streak"]:
-                                bot_state["max_loss_streak"] = bot_state["loss_streak"]
-
-                        current_total_bet = getCurrentTotalBetAmount()
-                        levels = bot_state["custom_bet_counts"]
-
-                        if was_real_bet:
-                            if is_win:
-                                bot_state["net_pl"] += current_total_bet
-                                log_message(f"Round Win [Real]! Num: {num} [{actual}] | +{current_total_bet} Won.", "win")
-                                bot_state["current_level"] = 1
-                                bot_state["can_place_bet"] = True
-                            else:
-                                bot_state["net_pl"] -= current_total_bet
-                                log_message(f"Round Loss [Real]! Num: {num} [{actual}] | -{current_total_bet} Lost. Skipping next.", "loss")
-                                bot_state["current_level"] += 1
-                                if bot_state["current_level"] > len(levels):
-                                    bot_state["current_level"] = 1
-                                bot_state["can_place_bet"] = False
-                        else:
-                            if is_win:
-                                log_message(f"Skipped Round WIN ✅ ({num} [{actual}]). Resuming real bets.", "win")
-                                bot_state["can_place_bet"] = True
-                            else:
-                                log_message(f"Skipped Round LOSS ❌ ({num} [{actual}]). Continuing skip.", "loss")
-                                bot_state["can_place_bet"] = False
-
-                    bot_state["numbers"].append(num)
-                    if len(bot_state["numbers"]) > 20:
-                        bot_state["numbers"].pop(0)
-
-                # Prediction & Auto-Betting Logic
-                next_pred = analyze_pattern()
-                bot_state["last_prediction"] = next_pred
-                current_active_issue = str(int(issue_num) + 1) if issue_num.isdigit() else ""
-
-                if next_pred and current_active_issue and current_active_issue != bot_state["last_betted_issue"]:
-                    if 6 <= remaining_sec <= 29:
-                        bot_state["last_betted_issue"] = current_active_issue
-                        if bot_state["can_place_bet"]:
-                            bot_state["real_bet_issues"].add(current_active_issue)
-                            
-                            b_count = getCurrentBetCount()
-                            select_type_val = 13 if next_pred == "BIG" else 14
-                            t_val = int(time.time())
-                            r_val = generate_random_hex()
-                            
-                            bet_payload = {
-                                "typeId": bot_state["game_type_id"],
-                                "issuenumber": current_active_issue,
-                                "amount": bot_state["base_amount"],
-                                "betCount": b_count,
-                                "gameType": 2,
-                                "selectType": select_type_val,
-                                "language": 7,
-                                "random": r_val,
-                                "timestamp": t_val
-                            }
-                            bet_payload["signature"] = calculate_dynamic_signature(bet_payload)
-
-                            bet_res = requests.post("https://ckygjf6r.com/api/webapi/GameBetting", json=bet_payload, headers=headers, timeout=10)
-                            b_data = bet_res.json()
-                            
-                            if b_data and (b_data.get("code") == 0 or b_data.get("msg") in ["Succeed", "Bet success"]):
-                                log_message(f"✅ Server Auto Bet Placed [{current_active_issue}]: {next_pred} (Amt: {getCurrentTotalBetAmount()})", "win")
-                            else:
-                                log_message(f"❌ Bet Failed [{current_active_issue}]: {b_data.get('msg', 'Unknown')}", "loss")
-                        else:
-                            log_message(f"⏭️ [SKIP] Skipping round {current_active_issue} on server.", "")
-
-    except Exception as e:
-        print("Server worker error:", str(e))
-
-# Run independent background worker every 3 seconds on the cloud server
-scheduler = BackgroundScheduler()
-scheduler.add_job(func=background_bot_loop, trigger="interval", seconds=3)
-scheduler.start()
-
-# ----------------- DASHBOARD UI ROUTE -----------------
-@app.route('/')
-def index():
-    return render_template_string("""
+# Aapka 100% Exact Original HTML/JS Code jo Render par as it is run hoga
+ORIGINAL_HTML_CODE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔥 WinGo Fully Automatic Bot (Server 24/7)</title>
+    <title>🔥 WinGo Fully Automatic Bot (Clean Trend Predictor)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
         body { background: #020617; color: #fff; text-align: center; padding: 15px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
@@ -245,25 +18,32 @@ def index():
         .card { background: #1e1e1e; padding: 15px; margin: 10px auto; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.5); text-align: left; }
         .dash-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
         .top-badge { background-color: #271515; border: 1px solid #573333; color: #2ecc71; padding: 5px 10px; border-radius: 15px; font-size: 11px; font-weight: bold; }
-        #historyBox { max-height: 150px; overflow-y: auto; background: #111; padding: 10px; margin-top: 15px; border-radius: 10px; text-align: left; font-size: 11px; }
+        .period { color: #f39c12; font-weight: bold; }
+        .number { font-size: 22px; color: #2ecc71; font-weight: bold; }
+        .timer-display { font-size: 16px; color: #e74c3c; font-weight: bold; background: #2a1215; padding: 4px 8px; border-radius: 6px; border: 1px solid #723232; display: inline-block; }
+        #result { margin-top: 10px; font-size: 18px; font-weight: bold; color: #38bdf8; text-align: center; }
+        #historyBox { max-height: 140px; overflow-y: auto; background: #111; padding: 10px; margin-top: 15px; border-radius: 10px; text-align: left; font-size: 12px; }
         .win { color: #00ff88; margin-bottom: 4px; }
         .loss { color: #ff3b3b; margin-bottom: 4px; }
+        .box { margin-top: 15px; background: #1e1e1e; padding: 12px; border-radius: 8px; text-align: left; }
         .primary-btn { width: 100%; padding: 14px; background: linear-gradient(to right, #f3cf8c, #c99b46); border: none; border-radius: 8px; color: #1a0f0f; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 10px; box-shadow: 0 4px 10px rgba(212, 163, 83, 0.3); }
         .stop-btn { background: linear-gradient(to right, #e74c3c, #c0392b); color: #fff; }
         .input-group { margin-bottom: 10px; }
         .input-group label { display: block; font-size: 12px; color: #c9a973; margin-bottom: 4px; }
         .input-group input, .input-group select { width: 100%; padding: 10px; background-color: #0f0707; border: 1px solid #573333; border-radius: 6px; color: #fff; font-size: 13px; outline: none; }
+        .row-flex { display: flex; gap: 10px; }
+        .row-flex .input-group { flex: 1; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </head>
 <body>
 
     <!-- 1. LOGIN SCREEN -->
-    <div id="login-screen" class="container" style="display: {% if logged_in %}none{% else %}block{% endif %};">
+    <div id="login-screen" class="container">
         <div style="text-align: center; margin-bottom: 20px;">
             <div style="font-size: 30px;">🟡</div>
             <h2>Ck Lottery</h2>
-            <p style="font-size: 11px; color: #bfa16f;">Server 24/7 Autonomous Bot Login</p>
+            <p style="font-size: 11px; color: #bfa16f;">Direct Mobile Login</p>
         </div>
         
         <div class="card">
@@ -276,188 +56,504 @@ def index():
                 <label>Password</label>
                 <input type="password" id="password-input" placeholder="Enter your password">
             </div>
-            <button id="login-btn" class="primary-btn" style="text-align: center;">🔓 Login & Start Server Bot</button>
+            <button id="login-btn" class="primary-btn" style="text-align: center;">🔓 Login & Connect</button>
             <div id="login-error" style="color: #ff3b3b; font-size: 12px; margin-top: 8px; text-align: center;"></div>
         </div>
     </div>
 
     <!-- 2. DASHBOARD -->
-    <div id="dashboard-screen" class="container" style="display: {% if logged_in %}block{% else %}none{% endif %};">
+    <div id="dashboard-screen" class="container" style="display: none;">
         <div class="dash-header">
-            <h3 style="font-size: 13px; color: #f3cf8c;">🤖 24/7 CLOUD SERVER BOT</h3>
-            <button class="top-badge" id="user-balance">Bal: Active</button>
+            <h3 style="font-size: 14px; color: #f3cf8c;">🤖 SMART GUARD BOT</h3>
+            <button class="top-badge" id="user-balance">Bal: Checking...</button>
         </div>
 
         <div class="card">
             <div class="input-group">
                 <label>Select Game Timer (Mode)</label>
-                <select id="game-type-id" onchange="updateSettings()">
-                    <option value="30" {% if game_type_id == 30 %}selected{% endif %}>WinGo 30s</option>
-                    <option value="1" {% if game_type_id == 1 %}selected{% endif %}>WinGo 1Min</option>
-                    <option value="2" {% if game_type_id == 2 %}selected{% endif %}>WinGo 3Min</option>
-                    <option value="3" {% if game_type_id == 3 %}selected{% endif %}>WinGo 5Min</option>
+                <select id="game-type-id">
+                    <option value="30">WinGo 30s</option>
+                    <option value="1">WinGo 1Min</option>
+                    <option value="2">WinGo 3Min</option>
+                    <option value="3">WinGo 5Min</option>
                 </select>
             </div>
 
             <div class="input-group">
                 <label>Base Amount</label>
-                <input type="number" id="base-amount" value="{{ base_amount }}" onchange="updateSettings()">
+                <input type="number" id="base-amount" value="10">
             </div>
 
             <div class="input-group">
-                <label>Custom Bet Count Levels</label>
-                <input type="text" id="custom-bet-counts" value="1, 10, 100, 1000, 10000, 100000" onchange="updateSettings()">
+                <label>Custom Bet Count Levels (Comma Separated)</label>
+                <input type="text" id="custom-bet-counts" value="1, 10, 100, 1000, 10000, 100000" placeholder="e.g. 1, 10, 100, 1000">
             </div>
             
-            <div style="font-size: 12px; margin: 8px 0;">Server Bot Status: <span style="color: #00ff88; font-weight: bold;">{% if is_running %}Running 24/7 on Cloud 🚀{% else %}Paused ⏸️{% endif %}</span></div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0;">
+                <div style="font-size: 12px;">Latest Period: <span id="latest-period" class="period">-</span></div>
+                <div class="timer-display">⏳ <span id="game-timer">00:30</span></div>
+            </div>
+            <div style="font-size: 12px; margin-bottom: 8px;">Winning Number: <span id="latest-number" class="number">-</span></div>
+            <div id="result">Bot Idle (Click Start)</div>
 
-            <button id="bot-toggle-btn" class="primary-btn {% if is_running %}stop-btn{% else %}{% endif %}" onclick="toggleBot()">
-                {% if is_running %}⏹ Stop Server Bot{% else %}🚀 Start Server Bot{% endif %}
-            </button>
+            <button id="bot-toggle-btn" class="primary-btn" onclick="toggleBot()">🚀 Start Smart-Auto Bot</button>
             <button onclick="logoutSession()" style="width:100%; margin-top:8px; background:none; border:none; color:#c9a973; font-size:11px; text-decoration:underline; cursor:pointer;">🚪 Logout / Change Account</button>
         </div>
 
-        <div class="card" style="font-size: 12px;">
-            <p>📊 Win: <span style="color: #00ff88">{{ win_count }}</span> | Loss: <span style="color: #ff3b3b">{{ loss_count }}</span></p>
-            <p style="margin-top: 4px;">🔥 Win Streak: {{ win_streak }} (Max: {{ max_win_streak }})</p>
-            <p style="margin-top: 4px;">❄️ Loss Streak: {{ loss_streak }} (Max: {{ max_loss_streak }})</p>
-            <p style="margin-top: 4px;">🔥 Current Level: Level {{ current_level }}</p>
-            <p style="margin-top: 4px; font-weight: bold; color: #f3cf8c;">📈 Net P/L: <span style="color: {% if net_pl >= 0 %}#00ff88{% else %}#ff3b3b{% endif %};">{{ net_pl }}</span></p>
+        <div class="box">
+            <p style="font-size: 12px;">📊 Win: <span id="win">0</span> | Loss: <span id="loss">0</span></p>
+            <p style="font-size: 12px; margin-top: 4px;">🔥 Win Streak: <span id="win-streak">0</span> (Max: <span id="max-win-streak">0</span>)</p>
+            <p style="font-size: 12px; margin-top: 4px;">❄️ Loss Streak: <span id="loss-streak">0</span> (Max: <span id="max-loss-streak">0</span>)</p>
+            <p style="font-size: 12px; margin-top: 4px;">🎯 Confidence: <span id="conf">0%</span></p>
+            <p style="font-size: 12px; margin-top: 4px;">🔥 Current Level: Level <span id="current-level">1</span> (Bet Count: <span id="current-bet-count">1</span>)</p>
+            <p style="font-size: 12px; margin-top: 4px;">💰 Next Bet Total Amount: <span id="bet-amount">10</span></p>
+            <p style="font-size: 12px; margin-top: 4px; font-weight: bold; color: #f3cf8c;">📈 Net P/L: <span id="net-pl">0</span></p>
         </div>
 
-        <h3 style="font-size: 13px; color: #c9a973; margin-top: 15px; text-align: left;">📜 Server 24/7 Live Logs</h3>
-        <div id="historyBox">
-            {% for log in logs %}
-                <div class="{{ log.type }}">[{{ log.time }}] {{ log.msg }}</div>
-            {% endfor %}
-        </div>
+        <h3 style="font-size: 13px; color: #c9a973; margin-top: 15px; text-align: left;">📜 Live Action & Logs</h3>
+        <div id="historyBox"></div>
     </div>
 
     <script>
+        const loginScreen = document.getElementById('login-screen');
+        const dashboardScreen = document.getElementById('dashboard-screen');
+        const loginBtn = document.getElementById('login-btn');
+        const userBalance = document.getElementById('user-balance');
+        const loginError = document.getElementById('login-error');
+
+        let activeToken = "";
+        let numbers = [];
+        let lastPrediction = "";
+        let historyList = [];
+        let processedPeriods = new Set();
+        let lastBettedIssue = "";
+        let realBetIssues = new Set();
+
+        let winCount = 0, lossCount = 0;
+        let currentWinStreak = 0, maxWinStreak = 0;
+        let currentLossStreak = 0, maxLossStreak = 0;
+        let currentLevel = 1;
+        let netProfitLoss = 0;
+        let isBotRunning = false;
+        let canPlaceBet = true;
+
+        function getActiveBetCountsArray() {
+            let inputVal = document.getElementById("custom-bet-counts").value;
+            let arr = inputVal.split(',').map(item => parseInt(item.trim())).filter(num => !isNaN(num) && num > 0);
+            if (arr.length === 0) arr = [1];
+            return arr;
+        }
+
+        function getCurrentBetCount() {
+            let levels = getActiveBetCountsArray();
+            let idx = Math.min(currentLevel - 1, levels.length - 1);
+            return levels[idx];
+        }
+
+        function getCurrentTotalBetAmount() {
+            let baseAmt = parseInt(document.getElementById("base-amount").value) || 10;
+            return baseAmt * getCurrentBetCount();
+        }
+
         function calculateDynamicSignature(payloadObj) {
             let t = { ...payloadObj };
-            delete t.signature; delete t.timestamp; delete t.track; delete t.xosoBettingData;
+            delete t.signature;
+            delete t.timestamp;
+            delete t.track;
+            delete t.xosoBettingData;
+
             const sortedObj = {};
             Object.keys(t).sort().forEach(r => {
                 const o = t[r];
-                if (o !== null && o !== "" && o !== undefined) sortedObj[r] = (o === 0) ? 0 : o;
+                if (o !== null && o !== "" && o !== undefined) {
+                    sortedObj[r] = (o === 0) ? 0 : o;
+                }
             });
-            return CryptoJS.MD5(JSON.stringify(sortedObj)).toString().toUpperCase().slice(0, 32);
+
+            let jsonStr = JSON.stringify(sortedObj);
+            let md5Hash = CryptoJS.MD5(jsonStr).toString().toUpperCase();
+            return md5Hash.slice(0, 32);
         }
+
         function generateRandomHex() {
             return [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
         }
 
-        document.getElementById('login-btn').addEventListener('click', async () => {
-            const phone = document.getElementById('phone-input').value.trim();
-            const password = document.getElementById('password-input').value.trim();
-            const errDiv = document.getElementById('login-error');
-            if(!phone || !password) { errDiv.innerText = "Enter phone and password!"; return; }
-
-            document.getElementById('login-btn').innerText = "Logging in...";
-
-            let timestampVal = Math.floor(Date.now() / 1000);
-            let randomVal = generateRandomHex();
-            let payload = { username: phone, pwd: password, phonetype: 1, logintype: "mobile", packId: "", deviceId: "451af594f1be19145249ec1687a6bef2", pixelId: "", fbcId: "", fbc: "", fbp: "", adId: "", language: 7, random: randomVal, timestamp: timestampVal };
-            payload.signature = calculateDynamicSignature(payload);
-
-            try {
-                let res = await fetch("https://ckygjf6r.com/api/webapi/Login", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json;charset=UTF-8" },
-                    body: JSON.stringify(payload)
-                });
-                let data = await res.json();
-                if(data && data.code === 0) {
-                    let token = data.token || (data.data?.token || data.data);
-                    await fetch('/api/login', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ phone, password, token })
-                    });
-                    location.reload();
-                } else {
-                    errDiv.innerText = data.msg || "Login failed";
-                    document.getElementById('login-btn').innerText = "🔓 Login & Start Server Bot";
-                }
-            } catch(e) { 
-                errDiv.innerText = "Login network error"; 
-                document.getElementById('login-btn').innerText = "🔓 Login & Start Server Bot";
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedToken = localStorage.getItem("wingo_phone_token");
+            if (savedToken) {
+                activeToken = savedToken;
+                loginScreen.style.display = 'none';
+                dashboardScreen.style.display = 'block';
+                fetchUserBalance();
+                fetchLiveData();
+                setInterval(fetchLiveData, 1000);
             }
         });
 
-        async function toggleBot() {
-            await fetch('/api/toggle', { method: 'POST' });
-            location.reload();
+        loginBtn.addEventListener('click', async () => {
+            const phone = document.getElementById('phone-input').value.trim();
+            const password = document.getElementById('password-input').value.trim();
+
+            if (!phone || !password) {
+                loginError.innerText = "Please enter phone number and password!";
+                return;
+            }
+
+            loginBtn.innerText = "Logging in...";
+            loginError.innerText = "";
+
+            let timestampVal = Math.floor(Date.now() / 1000);
+            let randomVal = generateRandomHex();
+
+            let loginPayload = {
+                username: phone, pwd: password, phonetype: 1, logintype: "mobile",
+                packId: "", deviceId: "451af594f1be19145249ec1687a6bef2",
+                pixelId: "", fbcId: "", fbc: "", fbp: "", adId: "",
+                language: 7, random: randomVal, timestamp: timestampVal
+            };
+            loginPayload.signature = calculateDynamicSignature(loginPayload);
+
+            try {
+                let response = await fetch("https://ckygjf6r.com/api/webapi/Login", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json;charset=UTF-8",
+                        "Accept": "application/json, text/plain, */*",
+                        "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
+                        "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
+                    },
+                    body: JSON.stringify(loginPayload)
+                });
+
+                let data = await response.json();
+                
+                if (data && data.code === 0) {
+                    if (data.token) activeToken = data.token;
+                    else if (data.data) {
+                        if (typeof data.data === 'string') activeToken = data.data;
+                        else if (data.data.token) activeToken = data.data.token;
+                    }
+
+                    if (!activeToken && data.data) {
+                        activeToken = JSON.stringify(data.data);
+                    }
+
+                    localStorage.setItem("wingo_phone_token", activeToken);
+
+                    loginScreen.style.display = 'none';
+                    dashboardScreen.style.display = 'block';
+                    fetchUserBalance();
+                    fetchLiveData();
+                    setInterval(fetchLiveData, 1000);
+                } else {
+                    loginError.innerText = data.msg || "Login failed! Check credentials.";
+                    loginBtn.innerText = "🔓 Login & Connect";
+                }
+            } catch (err) {
+                loginError.innerText = "Network error during login.";
+                loginBtn.innerText = "🔓 Login & Connect";
+            }
+        });
+
+        function logoutSession() {
+            localStorage.removeItem("wingo_phone_token");
+            dashboardScreen.style.display = 'none';
+            loginScreen.style.display = 'block';
+            loginBtn.innerText = "🔓 Login & Connect";
         }
 
-        async function updateSettings() {
-            let gameTypeId = document.getElementById('game-type-id').value;
-            let baseAmount = document.getElementById('base-amount').value;
-            let levels = document.getElementById('custom-bet-counts').value;
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ game_type_id: gameTypeId, base_amount: baseAmount, custom_bet_counts: levels })
-            });
+        async function fetchUserBalance() {
+            try {
+                let timestampVal = Math.floor(Date.now() / 1000);
+                let randomVal = generateRandomHex();
+                let balPayload = { language: 7, random: randomVal, timestamp: timestampVal };
+                balPayload.signature = calculateDynamicSignature(balPayload);
+
+                let response = await fetch("https://ckygjf6r.com/api/webapi/GetBalance", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json;charset=UTF-8",
+                        "authorization": "Bearer " + activeToken,
+                        "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
+                        "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
+                    },
+                    body: JSON.stringify(balPayload)
+                });
+                let data = await response.json();
+                
+                let balValue = "0";
+                if (data && data.code === 0 && data.data !== undefined) {
+                    if (typeof data.data === 'object' && data.data !== null) {
+                        balValue = data.data.amount ?? data.data.money ?? data.data.balance ?? Object.values(data.data)[0] ?? "0";
+                    } else {
+                        balValue = data.data;
+                    }
+                }
+                userBalance.innerText = "Bal: " + balValue;
+            } catch (err) {
+                userBalance.innerText = "Bal: Err";
+            }
         }
 
-        async function logoutSession() {
-            await fetch('/api/logout', { method: 'POST' });
-            location.reload();
+        function toggleBot() {
+            isBotRunning = !isBotRunning;
+            const btn = document.getElementById("bot-toggle-btn");
+            if (isBotRunning) {
+                btn.innerText = "⏹ Stop Smart-Auto Bot";
+                btn.className = "primary-btn stop-btn";
+                currentLevel = 1;
+                netProfitLoss = 0;
+                winCount = 0; lossCount = 0;
+                currentWinStreak = 0; maxWinStreak = 0;
+                currentLossStreak = 0; maxLossStreak = 0;
+                canPlaceBet = true;
+                realBetIssues.clear();
+                lastBettedIssue = "";
+                logMessage("Smart-Auto bot started successfully!", "win");
+            } else {
+                btn.innerText = "🚀 Start Smart-Auto Bot";
+                btn.className = "primary-btn";
+                logMessage("Bot stopped by user.", "loss");
+            }
         }
 
-        // Auto refresh dashboard every 4 seconds to show live server background logs and profit/loss
-        setTimeout(function(){ location.reload(); }, 4000);
+        function logMessage(msg, type = "") {
+            let cls = type === "win" ? "win" : (type === "loss" ? "loss" : "");
+            historyList.unshift(`<div class="${cls}">[${new Date().toLocaleTimeString()}] ${msg}</div>`);
+            document.getElementById("historyBox").innerHTML = historyList.join("");
+        }
+
+        async function fetchLiveData() {
+            if (dashboardScreen.style.display === 'none') return;
+
+            const selectedTypeId = parseInt(document.getElementById("game-type-id").value) || 30;
+            const url = "https://ckygjf6r.com/api/webapi/GetNoaverageEmerdList";
+            
+            let timestampVal = Math.floor(Date.now() / 1000);
+            let randomVal = generateRandomHex();
+
+            const payload = {
+                pageSize: 10, pageNo: 1, typeId: selectedTypeId, language: 7,
+                random: randomVal, timestamp: timestampVal
+            };
+            payload.signature = calculateDynamicSignature(payload);
+
+            try {
+                let response = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json;charset=UTF-8",
+                        "authorization": "Bearer " + activeToken,
+                        "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
+                        "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                let data = await response.json();
+                
+                if (data && data.code === 0 && data.data) {
+                    let list = data.data.list || data.data.data || data.data;
+                    if (Array.isArray(list) && list.length > 0) {
+                        let latestItem = list[0];
+                        let issueNum = latestItem.issueNumber || latestItem.issuenumber;
+                        let num = parseInt(latestItem.number);
+
+                        let epochSeconds = Math.floor(Date.now() / 1000);
+                        let remainingSeconds = 30 - (epochSeconds % 30);
+                        let timerFormatted = "00:" + (remainingSeconds < 10 ? "0" : "") + remainingSeconds;
+                        document.getElementById("game-timer").innerText = timerFormatted;
+
+                        if (issueNum && !processedPeriods.has(issueNum)) {
+                            processedPeriods.add(issueNum);
+                            document.getElementById("latest-period").innerText = issueNum;
+                            document.getElementById("latest-number").innerText = num;
+
+                            checkResultAndProgression(issueNum, num);
+                            numbers.push(num);
+                        }
+
+                        let nextPred = analyzePattern();
+                        let currentActiveIssue = (BigInt(issueNum) + 1n).toString();
+
+                        if (isBotRunning && nextPred && currentActiveIssue !== lastBettedIssue) {
+                            if (remainingSeconds >= 6 && remainingSeconds <= 29) {
+                                lastBettedIssue = currentActiveIssue;
+                                if (canPlaceBet) {
+                                    realBetIssues.add(currentActiveIssue);
+                                    placeRealBet(nextPred, selectedTypeId, currentActiveIssue);
+                                } else {
+                                    logMessage(`⏭️ [SKIP] Previous bet lost. Skipping round ${currentActiveIssue} (Tracking virtually).`, "");
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching live data:", error);
+            }
+        }
+
+        function getBS(n) { return n <= 4 ? "S" : "B"; }
+
+        function analyzePattern() {
+            if (numbers.length < 3) {
+                document.getElementById("result").innerText = "Collecting history (" + numbers.length + "/3)...";
+                document.getElementById("conf").innerText = "0%";
+                return "";
+            }
+
+            let recentBS = numbers.map(getBS);
+            let fullStr = recentBS.join(""); 
+            let prediction = "";
+            let patternName = "Standard Trend";
+            let confidence = 85;
+
+            if (fullStr.endsWith("SBS")) {
+                prediction = "BIG";
+                patternName = "Zig-Zag Trend (SBS)";
+                confidence = 90;
+            } else if (fullStr.endsWith("BSB")) {
+                prediction = "SMALL";
+                patternName = "Zig-Zag Trend (BSB)";
+                confidence = 90;
+            } else {
+                let lastBS = recentBS[recentBS.length - 1];
+                prediction = (lastBS === "S") ? "SMALL" : "BIG";
+                patternName = "Same Trend Follow";
+                confidence = 75;
+            }
+
+            document.getElementById("conf").innerText = confidence + "%";
+            document.getElementById("result").innerText = `🤖 [${patternName}] ➔ ${prediction}`;
+            lastPrediction = prediction;
+            return prediction;
+        }
+
+        function checkResultAndProgression(issueNum, n) {
+            if (!lastPrediction) return;
+
+            let actual = getBS(n);
+            let isWin = (lastPrediction === "SMALL" && actual === "S") || (lastPrediction === "BIG" && actual === "B");
+            let wasRealBet = realBetIssues.has(issueNum);
+
+            if (isWin) {
+                winCount++;
+                currentWinStreak++;
+                currentLossStreak = 0;
+                if (currentWinStreak > maxWinStreak) maxWinStreak = currentWinStreak;
+            } else {
+                lossCount++;
+                currentLossStreak++;
+                currentWinStreak = 0;
+                if (currentLossStreak > maxLossStreak) maxLossStreak = currentLossStreak;
+            }
+
+            if (wasRealBet) {
+                let currentTotalBet = getCurrentTotalBetAmount();
+                let levels = getActiveBetCountsArray();
+
+                if (isWin) {
+                    let wonAmount = currentTotalBet; 
+                    netProfitLoss += wonAmount;
+                    logMessage(`Round Win [Real Bet]! Actual: ${n} [${actual}] | +${wonAmount} Won. Continuing real bets.`, "win");
+                    currentLevel = 1;
+                    canPlaceBet = true;
+                } else {
+                    let lostAmount = currentTotalBet;
+                    netProfitLoss -= lostAmount;
+                    logMessage(`Round Loss [Real Bet]! Actual: ${n} [${actual}] | -${lostAmount} Lost. Skipping next bet until a win occurs.`, "loss");
+                    currentLevel++;
+                    if (currentLevel > levels.length) {
+                        currentLevel = 1;
+                    }
+                    canPlaceBet = false;
+                }
+            } else {
+                if (isWin) {
+                    logMessage(`Skipped Round Result: WIN ✅ (${n} [${actual}]). Target win achieved! Resuming real bets on next round.`, "win");
+                    canPlaceBet = true;
+                } else {
+                    logMessage(`Skipped Round Result: LOSS ❌ (${n} [${actual}]). Still waiting for a win to resume real betting.`, "loss");
+                    canPlaceBet = false;
+                }
+            }
+
+            let nextTotalBet = getCurrentTotalBetAmount();
+            let nextBetCount = getCurrentBetCount();
+            document.getElementById("win").innerText = winCount;
+            document.getElementById("loss").innerText = lossCount;
+            document.getElementById("win-streak").innerText = currentWinStreak;
+            document.getElementById("max-win-streak").innerText = maxWinStreak;
+            document.getElementById("loss-streak").innerText = currentLossStreak;
+            document.getElementById("max-loss-streak").innerText = maxLossStreak;
+            document.getElementById("current-level").innerText = currentLevel;
+            document.getElementById("current-bet-count").innerText = nextBetCount;
+            document.getElementById("bet-amount").innerText = nextTotalBet;
+            document.getElementById("net-pl").innerText = (netProfitLoss >= 0 ? "+" : "") + netProfitLoss;
+            document.getElementById("net-plstyle").color = netProfitLoss >= 0 ? "#00ff88" : "#ff3b3b";
+            
+            fetchUserBalance();
+        }
+
+        async function placeRealBet(prediction, typeIdVal, targetIssue) {
+            if (!prediction || !targetIssue) return;
+
+            let baseAmt = parseInt(document.getElementById("base-amount").value) || 10;
+            let finalBetCount = getCurrentBetCount(); 
+            let selectTypeVal = (prediction === "BIG") ? 13 : 14;
+
+            let timestampVal = Math.floor(Date.now() / 1000);
+            let randomVal = generateRandomHex();
+
+            const betPayload = {
+                typeId: typeIdVal, 
+                issuenumber: targetIssue, 
+                amount: baseAmt,
+                betCount: finalBetCount,
+                gameType: 2, 
+                selectType: selectTypeVal,
+                language: 7, 
+                random: randomVal, 
+                timestamp: timestampVal
+            };
+            betPayload.signature = calculateDynamicSignature(betPayload);
+
+            try {
+                let response = await fetch("https://ckygjf6r.com/api/webapi/GameBetting", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json;charset=UTF-8",
+                        "authorization": "Bearer " + activeToken,
+                        "x-app-type": "PWA", "ar-origin": "https://cklottery.cc",
+                        "origin": "https://cklottery.cc", "referer": "https://cklottery.cc/"
+                    },
+                    body: JSON.stringify(betPayload)
+                });
+
+                let resData = await response.json();
+                
+                if (resData && (resData.code === 0 || resData.msg === "Succeed" || resData.msg === "Bet success")) {
+                    logMessage(`✅ Bet Placed [${targetIssue}]: ${prediction} (Total: ${getCurrentTotalBetAmount()})`, "win");
+                    fetchUserBalance();
+                } else {
+                    let serverMsg = resData.msg || "Unknown Error";
+                    let serverCode = resData.code ?? "No Code";
+                    logMessage(`❌ Bet Fail [${targetIssue}] (Code: ${serverCode}): ${serverMsg}`, "loss");
+                }
+            } catch (err) {
+                logMessage(`❌ Network error during betting.`, "loss");
+            }
+        }
     </script>
 </body>
 </html>
-    """, logged_in=bool(bot_state["token"]), is_running=bot_state["is_running"],
-       win_count=bot_state["win_count"], loss_count=bot_state["loss_count"],
-       win_streak=bot_state["win_streak"], max_win_streak=bot_state["max_win_streak"],
-       loss_streak=bot_state["loss_streak"], max_loss_streak=bot_state["max_loss_streak"],
-       current_level=bot_state["current_level"], net_pl=bot_state["net_pl"],
-       game_type_id=bot_state["game_type_id"], base_amount=bot_state["base_amount"],
-       logs=bot_state["logs"])
+"""
 
-@app.route('/api/login', methods=['POST'])
-def api_login():
-    req = request.json
-    bot_state["phone"] = req.get('phone')
-    bot_state["password"] = req.get('password')
-    token = req.get('token')
-    if token:
-        if isinstance(token, dict): token = token.get('token', '')
-        bot_state["token"] = str(token)
-        bot_state["is_running"] = True
-        log_message("Server Bot connected and started successfully!", "win")
-    return jsonify({"success": True})
-
-@app.route('/api/toggle', methods=['POST'])
-def api_toggle():
-    bot_state["is_running"] = not bot_state["is_running"]
-    status_msg = "Resumed" if bot_state["is_running"] else "Paused"
-    log_message(f"Server Bot {status_msg} by user.", "win" if bot_state["is_running"] else "loss")
-    return jsonify({"is_running": bot_state["is_running"]})
-
-@app.route('/api/settings', methods=['POST'])
-def api_settings():
-    req = request.json
-    bot_state["game_type_id"] = int(req.get('game_type_id', 30))
-    bot_state["base_amount"] = int(req.get('base_amount', 10))
-    levels_str = req.get('custom_bet_counts', '1,10,100,1000,10000,100000')
-    try:
-        bot_state["custom_bet_counts"] = [int(x.strip()) for x in levels_str.split(',') if x.strip().isdigit()]
-    except:
-        pass
-    return jsonify({"success": True})
-
-@app.route('/api/logout', methods=['POST'])
-def api_logout():
-    bot_state["token"] = ""
-    bot_state["is_running"] = False
-    bot_state["logs"] = []
-    return jsonify({"success": True})
+@app.route('/')
+def home():
+    return render_template_string(ORIGINAL_HTML_CODE)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
